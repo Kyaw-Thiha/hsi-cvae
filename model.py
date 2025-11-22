@@ -44,6 +44,9 @@ class CVAELightningModule(L.LightningModule):
         self.scheduler_cfg = scheduler_cfg
         self.learning_rate = lr
         self.weight_decay = weight_decay
+        self.latent_dim = latent_dim
+        self.condition_dim = condition_dim
+        self.num_classes = condition_dim
 
     def forward(self, spectrum: torch.Tensor, condition: torch.Tensor) -> torch.Tensor:
         recon, _, _ = self.model(spectrum, condition)
@@ -92,3 +95,36 @@ class CVAELightningModule(L.LightningModule):
                 "monitor": "val_loss",
             },
         }
+
+    def labels_to_conditions(self, labels: torch.Tensor, device: torch.device) -> torch.Tensor:
+        """Map integer labels to conditioning vectors (one-hot rows) for sampling."""
+        if self.condition_dim == 0:
+            return torch.empty(labels.shape[0], 0, device=device)
+        idx = labels.clamp(0, self.num_classes - 1).long()
+        prototypes = torch.eye(self.num_classes, device=device, dtype=torch.float32)
+        return prototypes[idx]
+
+    @torch.no_grad()
+    def sample(
+        self,
+        n: int,
+        y: Optional[torch.Tensor] = None,
+        device: Optional[torch.device] = None,
+        temperature: float = 1.0,
+        **_: Any,
+    ) -> torch.Tensor:
+        target_device = device or self.device
+        if not isinstance(target_device, torch.device):
+            target_device = torch.device(str(target_device))
+        if y is not None:
+            conditions = self.labels_to_conditions(y.to(target_device), target_device)
+        else:
+            conditions = torch.rand(n, self.condition_dim, device=target_device)
+            if self.condition_dim > 0:
+                conditions = conditions / conditions.sum(dim=1, keepdim=True).clamp_min(1e-6)
+        z = torch.randn(n, self.latent_dim, device=target_device)
+        if temperature != 1.0:
+            z = z * temperature
+        recon = self.model.decode(z, conditions)
+        recon = recon * 2.0 - 1.0
+        return recon.view(n, 1, 1, -1)
