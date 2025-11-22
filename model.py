@@ -149,6 +149,7 @@ class CVAELightningModule(L.LightningModule):
         self,
         n: int,
         y: Optional[torch.Tensor] = None,
+        conditions: Optional[torch.Tensor] = None,
         device: Optional[torch.device] = None,
         temperature: float = 1.0,
         **_: Any,
@@ -156,15 +157,24 @@ class CVAELightningModule(L.LightningModule):
         target_device = device or self.device
         if not isinstance(target_device, torch.device):
             target_device = torch.device(str(target_device))
-        if y is not None:
-            conditions = self.labels_to_conditions(y.to(target_device), target_device)
+        if conditions is not None:
+            cond = conditions.to(target_device)
+            if cond.ndim != 2 or cond.size(1) != self.condition_dim:
+                raise ValueError(
+                    f"conditions must have shape (n, {self.condition_dim}) but received {tuple(cond.shape)}"
+                )
+            n_samples = cond.size(0)
+        elif y is not None:
+            cond = self.labels_to_conditions(y.to(target_device), target_device)
+            n_samples = cond.size(0)
         else:
-            conditions = torch.rand(n, self.condition_dim, device=target_device)
+            n_samples = n
+            cond = torch.rand(n_samples, self.condition_dim, device=target_device)
             if self.condition_dim > 0:
-                conditions = conditions / conditions.sum(dim=1, keepdim=True).clamp_min(1e-6)
-        z = torch.randn(n, self.latent_dim, device=target_device)
+                cond = cond / cond.sum(dim=1, keepdim=True).clamp_min(1e-6)
+        z = torch.randn(n_samples, self.latent_dim, device=target_device)
         if temperature != 1.0:
             z = z * temperature
-        recon = self.model.decode(z, conditions)
+        recon = self.model.decode(z, cond)
         recon = recon * 2.0 - 1.0
-        return recon.view(n, 1, 1, -1)
+        return recon.view(n_samples, 1, 1, -1)

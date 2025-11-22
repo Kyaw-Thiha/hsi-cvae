@@ -26,6 +26,8 @@ class SampleLineCharts(Callback):
         step_nm: float = 10.0,
         num_samples_per_class: int = 1,
         class_names: Optional[Sequence[str]] = None,
+        custom_conditions: Optional[Sequence[Sequence[float]]] = None,
+        normalize_custom_conditions: bool = True,
     ) -> None:
         super().__init__()
         if num_samples_per_class < 1:
@@ -35,6 +37,10 @@ class SampleLineCharts(Callback):
         self.step_nm = step_nm
         self.num_samples_per_class = num_samples_per_class
         self.class_names = list(class_names) if class_names is not None else None
+        self.custom_conditions = (
+            [list(map(float, cond)) for cond in custom_conditions] if custom_conditions is not None else None
+        )
+        self.normalize_custom_conditions = normalize_custom_conditions
 
     @torch.no_grad()
     def on_validation_epoch_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
@@ -43,12 +49,23 @@ class SampleLineCharts(Callback):
             return
         num_classes = int(getattr(pl_module, "num_classes", 0))
         sample_fn = getattr(pl_module, "sample", None)
-        if num_classes <= 0 or sample_fn is None:
+        if sample_fn is None:
+            return
+        if not self.custom_conditions and num_classes <= 0:
             return
 
         device = pl_module.device
-        labels = torch.arange(num_classes, device=device).repeat_interleave(self.num_samples_per_class)
-        spectra = sample_fn(n=labels.numel(), y=labels, device=device)
+        if self.custom_conditions:
+            base_conditions = torch.tensor(self.custom_conditions, dtype=torch.float32, device=device)
+            if self.normalize_custom_conditions and base_conditions.size(1) > 0:
+                base_conditions = base_conditions / base_conditions.sum(dim=1, keepdim=True).clamp_min(1e-6)
+            labels = torch.arange(base_conditions.size(0), device=device).repeat_interleave(self.num_samples_per_class)
+            cond_tensor = base_conditions.repeat_interleave(self.num_samples_per_class, dim=0)
+            spectra = sample_fn(n=cond_tensor.size(0), conditions=cond_tensor, device=device)
+        else:
+            labels = torch.arange(num_classes, device=device).repeat_interleave(self.num_samples_per_class)
+            spectra = sample_fn(n=labels.numel(), y=labels, device=device)
+
         spectra = spectra.view(labels.numel(), -1).detach().cpu()
         if spectra.numel() == 0:
             return
