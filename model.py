@@ -70,6 +70,19 @@ class CVAELightningModule(L.LightningModule):
     def test_step(self, batch: dict[str, torch.Tensor], _) -> None:
         self._shared_step(batch, "test")
 
+    def predict_step(
+        self,
+        batch: dict[str, torch.Tensor],
+        _: int,
+        dataloader_idx: int = 0,
+    ) -> torch.Tensor:
+        conditions = batch["condition"].to(self.device)
+        n = conditions.size(0)
+        z = torch.randn(n, self.latent_dim, device=conditions.device)
+        spectra = self.model.decode(z, conditions)
+        spectra = spectra * 2.0 - 1.0
+        return spectra.view(n, 1, 1, -1)
+
     def configure_optimizers(self) -> OptimizerLRScheduler:
         optimizer = optim.Adam(
             self.parameters(),

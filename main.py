@@ -127,18 +127,18 @@ def cli_main():
     _configure_tensorcore_precision()
 
     argv = sys.argv[1:]
-    if argv and argv[0] in {"fit", "validate", "test", "predict", "tune"}:
+    default_command = "fit"
+    supported_cmds = {"fit", "validate", "test", "predict", "tune"}
+    if argv and argv[0] in supported_cmds:
         command, remainder = argv[0], argv[1:]
-        default_args = [command, "--config", "config/base.yaml"]
-        args = default_args + remainder
     else:
-        args = [
-            "--config",
-            "config/base.yaml",
-            "--config",
-            "config/models/tdsat.yaml",
-            *argv,
-        ]
+        command, remainder = default_command, argv
+
+    default_configs = ["config/predict.yaml"] if command == "predict" else ["config/cvae.yaml"]
+    args = [command]
+    for cfg in default_configs:
+        args.extend(["--config", cfg])
+    args.extend(remainder)
 
     CVAELightningCLI(
         model_class=CVAELightningModule,

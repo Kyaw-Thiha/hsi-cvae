@@ -4,17 +4,22 @@ fit:
   run_batch_size_finder: false
   batch_size_finder_mode: power
   run_lr_finder: false
-  show_lr_plot: true
+  show_lr_plot: false
+
+predict:
+  out_dir: outputs/predictions
+  grid_nrow: 16
+  ckpt_path: checkpoints/cvae.ckpt
+  label_key: condition
 
 trainer:
-  max_epochs: 200
-  precision: 32
-  gradient_clip_val: 1.0
   default_root_dir: outputs
   callbacks:
-    - class_path: callbacks.sample_images.SampleImages
+    - class_path: callbacks.predict_save.SavePredictionsCallback
       init_args:
-        num_per_class: 8
+        out_dir: ${predict.out_dir}
+        grid_nrow: ${predict.grid_nrow}
+        label_key: ${predict.label_key}
 
 model:
   class_path: model.CVAELightningModule
@@ -49,4 +54,4 @@ data:
     seed: 42
     pin_memory: true
 
-ckpt_path: null
+ckpt_path: ${predict.ckpt_path}

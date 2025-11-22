@@ -16,20 +16,20 @@ class HyperspectralDataModule(L.LightningDataModule):
         self,
         csv_path: str,
         condition_columns: Sequence[str],
-        spectral_range: tuple[int, int, int],
+        spectral_range: Sequence[int],
         batch_size: int = 256,
         num_workers: int = 4,
-        splits: tuple[float, float, float] = (0.8, 0.1, 0.1),
+        splits: Sequence[float] = (0.8, 0.1, 0.1),
         seed: int = 42,
         pin_memory: bool = True,
     ) -> None:
         super().__init__()
         self.csv_path = csv_path
         self.condition_columns = list(condition_columns)
-        self.spectral_range = spectral_range
+        self.spectral_range = self._parse_spectral_range(spectral_range)
         self.batch_size = batch_size
         self.num_workers = num_workers
-        self.splits = splits
+        self.splits = tuple(splits)
         self.seed = seed
         self.pin_memory = pin_memory
 
@@ -37,8 +37,10 @@ class HyperspectralDataModule(L.LightningDataModule):
         self.train_set: Optional[Dataset] = None
         self.val_set: Optional[Dataset] = None
         self.test_set: Optional[Dataset] = None
+        self.predict_set: Optional[Dataset] = None
 
     def setup(self, stage: Optional[str] = None) -> None:
+        del stage
         if self.dataset is not None:
             return
 
@@ -58,6 +60,7 @@ class HyperspectralDataModule(L.LightningDataModule):
             lengths=[train_len, val_len, test_len],
             generator=torch.Generator().manual_seed(self.seed),
         )
+        self.predict_set = self.dataset
 
     def dataloader(self, dataset: Optional[Dataset], shuffle: bool) -> DataLoader:
         if dataset is None:
@@ -78,3 +81,15 @@ class HyperspectralDataModule(L.LightningDataModule):
 
     def test_dataloader(self) -> DataLoader:
         return self.dataloader(self.test_set, shuffle=False)
+
+    def predict_dataloader(self) -> DataLoader:
+        return self.dataloader(self.predict_set, shuffle=False)
+
+    @staticmethod
+    def _parse_spectral_range(range_like: Sequence[int]) -> tuple[int, int, int]:
+        if len(range_like) != 3:
+            raise ValueError("spectral_range must contain exactly three integers: (start, end, step).")
+        start, end, step = (int(value) for value in range_like)
+        if step <= 0:
+            raise ValueError("spectral_range step must be positive.")
+        return start, end, step
