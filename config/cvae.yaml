@@ -1,0 +1,38 @@
+seed: 42
+
+data:
+  csv_path: data/simpler_data_rwc.csv
+  condition_columns: [gv_fraction, npv_fraction, soil_fraction]
+  spectral_range:
+    start: 400
+    end: 2490
+    step: 10
+  batch_size: 256
+  num_workers: 4
+  splits:
+    train: 0.8
+    val: 0.1
+    test: 0.1
+  shuffle: true
+
+model:
+  architecture: base
+  latent_dim: 32
+  hidden_dims: [512, 256, 128]
+  dropout: 0.1
+
+loss:
+  name: beta_vae
+  params:
+    beta: 4.0
+    recon: mse
+
+trainer:
+  max_epochs: 200
+  precision: 32
+  gradient_clip_val: 1.0
+  lr: 0.001
+  weight_decay: 0.0
+  scheduler:
+    name: cosine
+    T_max: 200
