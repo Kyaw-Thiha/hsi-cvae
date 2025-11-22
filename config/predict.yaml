@@ -22,36 +22,32 @@ trainer:
         label_key: ${predict.label_key}
 
 model:
-  class_path: model.CVAELightningModule
-  init_args:
-    input_dim: 210
-    condition_dim: 3
-    latent_dim: 32
-    hidden_dims: [512, 256, 128]
-    dropout: 0.1
-    loss_name: beta_vae
-    loss_params:
-      beta: 4.0
-      recon: mse
-    lr: 0.001
-    weight_decay: 0.0
-    scheduler_cfg:
-      name: cosine
-      T_max: 200
+  input_dim: 210
+  condition_dim: 3
+  latent_dim: 32
+  hidden_dims: [512, 256, 128]
+  dropout: 0.1
+  loss_name: beta_vae
+  loss_params:
+    beta: 4.0
+    recon: mse
+  lr: 0.001
+  weight_decay: 0.0
+  scheduler_cfg:
+    name: cosine
+    T_max: 200
 
 data:
-  class_path: data_module.HyperspectralDataModule
-  init_args:
-    csv_path: data/simpler_data_rwc.csv
-    condition_columns:
-      - gv_fraction
-      - npv_fraction
-      - soil_fraction
-    spectral_range: [400, 2490, 10]
-    batch_size: 256
-    num_workers: 4
-    splits: [0.8, 0.1, 0.1]
-    seed: 42
-    pin_memory: true
+  csv_path: data/simpler_data_rwc.csv
+  condition_columns:
+    - gv_fraction
+    - npv_fraction
+    - soil_fraction
+  spectral_range: [400, 2490, 10]
+  batch_size: 256
+  num_workers: 4
+  splits: [0.8, 0.1, 0.1]
+  seed: 42
+  pin_memory: true
 
 ckpt_path: ${predict.ckpt_path}

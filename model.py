@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from dataclasses import asdict, dataclass
+from typing import Any, Mapping, Optional
 
 import lightning as L
 import torch
@@ -9,6 +10,18 @@ from torch import optim
 
 from models.base.cvae import ConditionalVAE
 from models.base.losses import LOSS_REGISTRY
+
+
+@dataclass
+class LossParams:
+    beta: float = 4.0
+    recon: str = "mse"
+
+
+@dataclass
+class SchedulerParams:
+    name: str = "cosine"
+    T_max: int = 200
 
 
 class CVAELightningModule(L.LightningModule):
@@ -22,10 +35,10 @@ class CVAELightningModule(L.LightningModule):
         hidden_dims: list[int],
         dropout: float = 0.0,
         loss_name: str = "vanilla",
-        loss_params: Optional[dict[str, Any]] = None,
+        loss_params: Optional[LossParams] = None,
         lr: float = 1e-3,
         weight_decay: float = 0.0,
-        scheduler_cfg: Optional[dict[str, Any]] = None,
+        scheduler_cfg: Optional[SchedulerParams] = None,
     ) -> None:
         super().__init__()
         self.save_hyperparameters(ignore=["loss_params", "scheduler_cfg"])
@@ -40,8 +53,22 @@ class CVAELightningModule(L.LightningModule):
         if loss_name not in LOSS_REGISTRY:
             raise ValueError(f"Unsupported loss: {loss_name}")
         self.loss_fn = LOSS_REGISTRY[loss_name]
-        self.loss_params = loss_params or {}
-        self.scheduler_cfg = scheduler_cfg
+        if loss_params is None:
+            self.loss_params: dict[str, Any] = {}
+        elif isinstance(loss_params, LossParams):
+            self.loss_params = asdict(loss_params)
+        elif isinstance(loss_params, Mapping):
+            self.loss_params = dict(loss_params)
+        else:
+            raise TypeError("loss_params must be a LossParams dataclass or mapping.")
+        if scheduler_cfg is None:
+            self.scheduler_cfg: Optional[dict[str, Any]] = None
+        elif isinstance(scheduler_cfg, SchedulerParams):
+            self.scheduler_cfg = asdict(scheduler_cfg)
+        elif isinstance(scheduler_cfg, Mapping):
+            self.scheduler_cfg = dict(scheduler_cfg)
+        else:
+            raise TypeError("scheduler_cfg must be a SchedulerParams dataclass or mapping.")
         self.learning_rate = lr
         self.weight_decay = weight_decay
         self.latent_dim = latent_dim

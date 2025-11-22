@@ -33,16 +33,27 @@ class CVAELightningCLI(LightningCLI):
     _MODEL_NAME_PLACEHOLDER = "${model.model_name}"
 
     def add_arguments_to_parser(self, parser):
-        parser.add_argument("--run_batch_size_finder", type=bool, default=False, help="Whether to run the batch size finder")
+        super().add_arguments_to_parser(parser)
         parser.add_argument(
-            "--batch_size_finder_mode", type=str, default="power", help="Mode for batch size finder (power|binsearch)"
+            "--fit.run_batch_size_finder", type=bool, default=False, help="Whether to run the batch size finder"
         )
-        parser.add_argument("--run_lr_finder", type=bool, default=False, help="Whether to run learning rate finder")
-        parser.add_argument("--show_lr_plot", type=bool, default=True, help="Whether to plot learning rate finder")
+        parser.add_argument(
+            "--fit.batch_size_finder_mode",
+            type=str,
+            default="power",
+            help="Mode for batch size finder (power|binsearch)",
+        )
+        parser.add_argument("--fit.run_lr_finder", type=bool, default=False, help="Whether to run learning rate finder")
+        parser.add_argument("--fit.show_lr_plot", type=bool, default=True, help="Whether to plot learning rate finder")
 
     def before_fit(self):
         self._materialize_model_name_placeholders()
         tuner = Tuner(self.trainer)
+        fit_config = getattr(self.config, "fit", None)
+        run_batch_size_finder = getattr(fit_config, "run_batch_size_finder", False) if fit_config else False
+        batch_size_mode = getattr(fit_config, "batch_size_finder_mode", "power") if fit_config else "power"
+        run_lr_finder = getattr(fit_config, "run_lr_finder", False) if fit_config else False
+        show_lr_plot = getattr(fit_config, "show_lr_plot", True) if fit_config else True
 
         # ----------------------------------
         # Batch Size Finder
@@ -51,14 +62,13 @@ class CVAELightningCLI(LightningCLI):
         #   run_batch_size_finder (bool): Determines if batch_size finder is ran. Default is True.
         #   batch_size_finder_mode (str): "power" or "binsearch". Determines the mode of batch_size finder
         # ----------------------------------
-        if self.config.fit.run_batch_size_finder:
+        if run_batch_size_finder:
             if self.trainer.fast_dev_run:  # pyright: ignore
                 print("🚫 Skipping batch finder due to fast_dev_run")
             else:
-                mode = self.config.fit.batch_size_finder_mode
-                print(f"\n📦 Running batch size finder (mode: {mode})...")
+                print(f"\n📦 Running batch size finder (mode: {batch_size_mode})...")
 
-                new_batch_size = tuner.scale_batch_size(self.model, datamodule=self.datamodule, mode=mode)
+                new_batch_size = tuner.scale_batch_size(self.model, datamodule=self.datamodule, mode=batch_size_mode)
 
                 print(f"✅ Suggested batch size: {new_batch_size}")
 
@@ -73,14 +83,14 @@ class CVAELightningCLI(LightningCLI):
         #   run_lr_finder (bool): Determines if LR finder is ran. Default is True.
         #   show_lr_plot (bool): Determines if LR finder plot is show. Default is False.
         # ----------------------------------
-        if self.config.fit.run_lr_finder:
+        if run_lr_finder:
             if self.trainer.fast_dev_run:  # pyright: ignore
                 print("🚫 Skipping LR finder due to fast_dev_run")
             else:
                 lr_finder = tuner.lr_find(self.model, datamodule=self.datamodule)
 
                 if lr_finder is not None:
-                    if self.config.fit.show_lr_plot:
+                    if show_lr_plot:
                         fig = lr_finder.plot(suggest=True)
                         if isinstance(fig, Figure):
                             fig.savefig("logs/lr_finder_plot.png")
@@ -127,23 +137,15 @@ def cli_main():
     _configure_tensorcore_precision()
 
     argv = sys.argv[1:]
-    default_command = "fit"
-    supported_cmds = {"fit", "validate", "test", "predict", "tune"}
-    if argv and argv[0] in supported_cmds:
-        command, remainder = argv[0], argv[1:]
+    if argv:
+        cli_args = None
     else:
-        command, remainder = default_command, argv
-
-    default_configs = ["config/predict.yaml"] if command == "predict" else ["config/cvae.yaml"]
-    args = [command]
-    for cfg in default_configs:
-        args.extend(["--config", cfg])
-    args.extend(remainder)
+        cli_args = ["fit", "--config", "config/cvae.yaml"]
 
     CVAELightningCLI(
         model_class=CVAELightningModule,
         datamodule_class=HyperspectralDataModule,
-        args=args,
+        args=cli_args,
     )
 
 
