@@ -12,9 +12,31 @@ trainer:
   gradient_clip_val: 1.0
   default_root_dir: outputs
   callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        dirpath: outputs/checkpoints/best
+        filename: e_{epoch}-l_{val_loss:.4f}
+        monitor: val_loss
+        mode: min
+        save_top_k: 1
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        dirpath: outputs/checkpoints/interval
+        filename: e_{epoch}
+        every_n_epochs: 5
+        save_top_k: -1
+        save_last: false
+    - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+      init_args:
+        logging_interval: epoch
     - class_path: callbacks.sample_images.SampleImages
       init_args:
         num_per_class: 8
+    - class_path: callbacks.predict_save.SavePredictionsCallback
+      init_args:
+        out_dir: outputs/predict
+        grid_nrow: 8
+        label_key: condition
 
 model:
   class_path: model.CVAELightningModule
