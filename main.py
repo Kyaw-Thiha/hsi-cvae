@@ -137,16 +137,23 @@ def cli_main():
     _configure_tensorcore_precision()
 
     argv = sys.argv[1:]
-    if argv:
-        cli_args = None
+    commands = {"fit", "validate", "test", "predict", "tune"}
+    if argv and argv[0] in commands:
+        command, remainder = argv[0], argv[1:]
+        cli_args = [command, "--config", "config/base.yaml", *remainder]
     else:
-        cli_args = ["fit", "--config", "config/models/mlp.yaml"]
+        cli_args = [
+            "--config",
+            "config/base.yaml",
+            "--config",
+            "config/models/mlp.yaml",
+            *argv,
+        ]
 
     CVAELightningCLI(
         model_class=CVAELightningModule,
         datamodule_class=HyperspectralDataModule,
         args=cli_args,
-        parser_kwargs={"default_config_files": ["config/base.yaml"]},
     )
 
 
