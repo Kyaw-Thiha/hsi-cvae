@@ -140,18 +140,13 @@ def cli_main():
     if argv:
         cli_args = None
     else:
-        cli_args = [
-            "fit",
-            "--config",
-            "config/base.yaml",
-            "--config",
-            "config/models/mlp.yaml",
-        ]
+        cli_args = ["fit", "--config", "config/models/mlp.yaml"]
 
     CVAELightningCLI(
         model_class=CVAELightningModule,
         datamodule_class=HyperspectralDataModule,
         args=cli_args,
+        parser_kwargs={"default_config_files": ["config/base.yaml"]},
     )
 
 
