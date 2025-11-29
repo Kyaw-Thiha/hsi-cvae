@@ -9,6 +9,8 @@ from lightning.pytorch.utilities.types import OptimizerLRScheduler
 from torch import optim
 
 from models.base.cvae import ConditionalVAE
+from models.cnn.cvae import ConvConditionalVAE
+from models.transformer.cvae import TransformerConditionalVAE
 from models.base.losses import LOSS_REGISTRY
 
 
@@ -34,6 +36,9 @@ class CVAELightningModule(L.LightningModule):
         latent_dim: int,
         hidden_dims: list[int],
         dropout: float = 0.0,
+        architecture: str = "mlp",
+        cnn_params: Optional[Mapping[str, Any]] = None,
+        transformer_params: Optional[Mapping[str, Any]] = None,
         loss_name: str = "vanilla",
         loss_params: Optional[LossParams] = None,
         lr: float = 1e-3,
@@ -43,9 +48,12 @@ class CVAELightningModule(L.LightningModule):
         super().__init__()
         self.save_hyperparameters(ignore=["loss_params", "scheduler_cfg"])
 
-        self.model = ConditionalVAE(
+        self.architecture = architecture.lower()
+        self.cnn_params = dict(cnn_params or {})
+        self.transformer_params = dict(transformer_params or {})
+        self.model = self._build_model(
             input_dim=input_dim,
-            cond_dim=condition_dim,
+            condition_dim=condition_dim,
             latent_dim=latent_dim,
             hidden_dims=hidden_dims,
             dropout=dropout,
@@ -74,6 +82,50 @@ class CVAELightningModule(L.LightningModule):
         self.latent_dim = latent_dim
         self.condition_dim = condition_dim
         self.num_classes = condition_dim
+
+    def _build_model(
+        self,
+        input_dim: int,
+        condition_dim: int,
+        latent_dim: int,
+        hidden_dims: list[int],
+        dropout: float,
+    ) -> torch.nn.Module:
+        if self.architecture == "mlp":
+            return ConditionalVAE(
+                input_dim=input_dim,
+                cond_dim=condition_dim,
+                latent_dim=latent_dim,
+                hidden_dims=hidden_dims,
+                dropout=dropout,
+            )
+        if self.architecture == "cnn":
+            conv_channels = self.cnn_params.get("conv_channels")
+            if not conv_channels:
+                raise ValueError("cnn_params.conv_channels must be provided for CNN architecture")
+            return ConvConditionalVAE(
+                input_dim=input_dim,
+                cond_dim=condition_dim,
+                latent_dim=latent_dim,
+                conv_channels=conv_channels,
+                dropout=self.cnn_params.get("dropout", dropout),
+                cond_channels=self.cnn_params.get("cond_channels", 1),
+            )
+        if self.architecture == "transformer":
+            transformer_defaults: dict[str, Any] = {
+                "d_model": 128,
+                "n_heads": 4,
+                "n_layers": 4,
+                "dropout": dropout,
+            }
+            transformer_defaults.update(self.transformer_params)
+            return TransformerConditionalVAE(
+                input_dim=input_dim,
+                cond_dim=condition_dim,
+                latent_dim=latent_dim,
+                **transformer_defaults,
+            )
+        raise ValueError(f"Unsupported architecture: {self.architecture}")
 
     def forward(self, spectrum: torch.Tensor, condition: torch.Tensor) -> torch.Tensor:
         recon, _, _ = self.model(spectrum, condition)

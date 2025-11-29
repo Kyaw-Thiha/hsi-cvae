@@ -1,0 +1,7 @@
+model:
+  architecture: transformer
+  transformer_params:
+    d_model: 256
+    n_heads: 8
+    n_layers: 6
+    dropout: 0.1

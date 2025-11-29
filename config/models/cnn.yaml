@@ -1,0 +1,6 @@
+model:
+  architecture: cnn
+  cnn_params:
+    conv_channels: [64, 128, 256]
+    cond_channels: 1
+    dropout: 0.1

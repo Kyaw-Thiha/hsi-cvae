@@ -32,15 +32,6 @@ trainer:
     - class_path: callbacks.sample_images.SampleImages
       init_args:
         num_per_class: 8
-    # - class_path: callbacks.line_charts.SampleLineCharts
-    #   init_args:
-    #     out_dir: outputs/line_charts
-    #     start_nm: 400
-    #     step_nm: 10
-    #     class_names:
-    #       - gv_fraction
-    #       - npv_fraction
-    #       - soil_fraction
     - class_path: callbacks.line_charts.SampleLineCharts
       init_args:
         out_dir: outputs/line_charts
@@ -59,6 +50,7 @@ trainer:
         grid_nrow: 8
 
 model:
+  architecture: mlp
   input_dim: 210
   condition_dim: 3
   latent_dim: 32

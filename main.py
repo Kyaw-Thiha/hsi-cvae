@@ -140,7 +140,13 @@ def cli_main():
     if argv:
         cli_args = None
     else:
-        cli_args = ["fit", "--config", "config/cvae.yaml"]
+        cli_args = [
+            "fit",
+            "--config",
+            "config/base.yaml",
+            "--config",
+            "config/models/mlp.yaml",
+        ]
 
     CVAELightningCLI(
         model_class=CVAELightningModule,
