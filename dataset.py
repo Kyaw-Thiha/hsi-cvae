@@ -31,11 +31,20 @@ class HyperspectralDataset(Dataset[Batch]):
         self.spectral_columns = self._infer_spectral_columns(df.columns, spectral_range)
 
         spectra = df[self.spectral_columns].to_numpy(dtype=np.float32)
+        spectra = self.normalize_reflectance(spectra)
         conditions = df[self.condition_columns].to_numpy(dtype=np.float32)
 
         self.spectra = torch.tensor(spectra, dtype=dtype)
         self.conditions = torch.tensor(conditions, dtype=dtype)
         self._df = df if cache_dataframe else None
+
+    @staticmethod
+    def normalize_reflectance(values: np.ndarray) -> np.ndarray:
+        """Min-max normalize each spectrum row so reflectance stays in [0, 1]."""
+        mins = values.min(axis=1, keepdims=True)
+        maxs = values.max(axis=1, keepdims=True)
+        ranges = np.clip(maxs - mins, a_min=1e-6, a_max=None)
+        return (values - mins) / ranges
 
     @staticmethod
     def _infer_spectral_columns(columns: Iterable[str], spectral_range: tuple[int, int, int]) -> list[str]:
