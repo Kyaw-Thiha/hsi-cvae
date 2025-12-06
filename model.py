@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Union
 
 import lightning as L
 import torch
@@ -48,16 +48,19 @@ class CVAELightningModule(L.LightningModule):
         super().__init__()
         self.save_hyperparameters(ignore=["loss_params", "scheduler_cfg"])
 
+        # Model Architecture
         self.architecture = architecture.lower()
         self.cnn_params = dict(cnn_params or {})
         self.transformer_params = dict(transformer_params or {})
-        self.model = self._build_model(
+        self.model: Union[ConditionalVAE, ConvConditionalVAE, TransformerConditionalVAE] = self._build_model(
             input_dim=input_dim,
             condition_dim=condition_dim,
             latent_dim=latent_dim,
             hidden_dims=hidden_dims,
             dropout=dropout,
         )
+
+        # Loss Function
         if loss_name not in LOSS_REGISTRY:
             raise ValueError(f"Unsupported loss: {loss_name}")
         self.loss_fn = LOSS_REGISTRY[loss_name]
@@ -66,17 +69,23 @@ class CVAELightningModule(L.LightningModule):
         elif isinstance(loss_params, LossParams):
             self.loss_params = asdict(loss_params)
         elif isinstance(loss_params, Mapping):
+            # For passing in through config.yaml
             self.loss_params = dict(loss_params)
         else:
             raise TypeError("loss_params must be a LossParams dataclass or mapping.")
+
+        # Schedular Config
         if scheduler_cfg is None:
             self.scheduler_cfg: Optional[dict[str, Any]] = None
         elif isinstance(scheduler_cfg, SchedulerParams):
             self.scheduler_cfg = asdict(scheduler_cfg)
         elif isinstance(scheduler_cfg, Mapping):
+            # For passing in through config.yaml
             self.scheduler_cfg = dict(scheduler_cfg)
         else:
             raise TypeError("scheduler_cfg must be a SchedulerParams dataclass or mapping.")
+
+        # Model Hyperparams
         self.learning_rate = lr
         self.weight_decay = weight_decay
         self.latent_dim = latent_dim
@@ -90,7 +99,7 @@ class CVAELightningModule(L.LightningModule):
         latent_dim: int,
         hidden_dims: list[int],
         dropout: float,
-    ) -> torch.nn.Module:
+    ) -> Union[ConditionalVAE, ConvConditionalVAE, TransformerConditionalVAE]:
         if self.architecture == "mlp":
             return ConditionalVAE(
                 input_dim=input_dim,
@@ -212,9 +221,7 @@ class CVAELightningModule(L.LightningModule):
         if conditions is not None:
             cond = conditions.to(target_device)
             if cond.ndim != 2 or cond.size(1) != self.condition_dim:
-                raise ValueError(
-                    f"conditions must have shape (n, {self.condition_dim}) but received {tuple(cond.shape)}"
-                )
+                raise ValueError(f"conditions must have shape (n, {self.condition_dim}) but received {tuple(cond.shape)}")
             n_samples = cond.size(0)
         elif y is not None:
             cond = self.labels_to_conditions(y.to(target_device), target_device)

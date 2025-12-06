@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Sequence
 
 import torch
 from torch import nn
@@ -8,6 +7,8 @@ from torch import nn
 
 class PositionalEncoding(nn.Module):
     """Standard sinusoidal positional encoding reused for encoder/decoder."""
+
+    pe: torch.Tensor
 
     def __init__(self, dim: int, max_len: int = 512) -> None:
         super().__init__()
@@ -40,6 +41,7 @@ class TransformerEncoder(nn.Module):
         self.input_proj = nn.Linear(1, d_model)
         self.cond_proj = nn.Linear(cond_dim, d_model) if cond_dim > 0 else None
         self.pos_encoding = PositionalEncoding(d_model, seq_len + 1)
+
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=n_heads,
@@ -49,6 +51,7 @@ class TransformerEncoder(nn.Module):
         )
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
         self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
+
         self.mu_head = nn.Linear(d_model, latent_dim)
         self.logvar_head = nn.Linear(d_model, latent_dim)
 
