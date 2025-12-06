@@ -6,24 +6,6 @@ fit:
   run_lr_finder: false
   show_lr_plot: false
 
-predict:
-  out_dir: outputs/predictions
-  ckpt_path: checkpoints/cvae.ckpt
-  save_spectra: true
-  spectra_format: csv
-  spectra_subdir: spectra
-  line_chart:
-    out_dir: ${predict.out_dir}/charts
-    start_nm: 400
-    step_nm: 10
-    class_names:
-      - gv40_np35_soil25
-      - gv20_np10_soil70
-    custom_conditions:
-      - [40, 35, 25]
-      - [0.2, 0.1, 0.7]
-    normalize_custom_conditions: true
-
 trainer:
   default_root_dir: outputs
   callbacks:
@@ -72,4 +54,4 @@ data:
   seed: 42
   pin_memory: true
 
-ckpt_path: ${predict.ckpt_path}
+ckpt_path: checkpoints/cvae.ckpt
