@@ -11,8 +11,8 @@ from torch import optim
 from models.mlp.cvae import ConditionalVAE
 from models.cnn.cvae import ConvConditionalVAE
 from models.transformer.cvae import TransformerConditionalVAE
-from models.losses import LOSS_REGISTRY
 from models.conformer.cvae import ConformerConditionalVAE
+from models.losses import LOSS_REGISTRY
 
 
 @dataclass
@@ -55,12 +55,14 @@ class CVAELightningModule(L.LightningModule):
         self.cnn_params = dict(cnn_params or {})
         self.transformer_params = dict(transformer_params or {})
         self.conformer_params = dict(conformer_params or {})
-        self.model: Union[ConditionalVAE, ConvConditionalVAE, TransformerConditionalVAE, ConformerConditionalVAE] = self._build_model(
-            input_dim=input_dim,
-            condition_dim=condition_dim,
-            latent_dim=latent_dim,
-            hidden_dims=hidden_dims,
-            dropout=dropout,
+        self.model: Union[ConditionalVAE, ConvConditionalVAE, TransformerConditionalVAE, ConformerConditionalVAE] = (
+            self._build_model(
+                input_dim=input_dim,
+                condition_dim=condition_dim,
+                latent_dim=latent_dim,
+                hidden_dims=hidden_dims,
+                dropout=dropout,
+            )
         )
 
         # Loss Function
