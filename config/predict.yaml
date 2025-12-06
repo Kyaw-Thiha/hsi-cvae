@@ -29,15 +29,19 @@ trainer:
   callbacks:
     - class_path: callbacks.predict_line_charts.PredictLineCharts
       init_args:
-        out_dir: ${predict.line_chart.out_dir}
-        start_nm: ${predict.line_chart.start_nm}
-        step_nm: ${predict.line_chart.step_nm}
-        class_names: ${predict.line_chart.class_names}
-        custom_conditions: ${predict.line_chart.custom_conditions}
-        normalize_custom_conditions: ${predict.line_chart.normalize_custom_conditions}
-        save_spectra: ${predict.save_spectra}
-        spectra_format: ${predict.spectra_format}
-        spectra_subdir: ${predict.spectra_subdir}
+        out_dir: outputs/predictions/charts
+        start_nm: 400
+        step_nm: 10
+        class_names:
+          - gv40_np35_soil25
+          - gv20_np10_soil70
+        custom_conditions:
+          - [40, 35, 25]
+          - [0.2, 0.1, 0.7]
+        normalize_custom_conditions: true
+        save_spectra: true
+        spectra_format: csv
+        spectra_subdir: spectra
 
 model:
   input_dim: 210

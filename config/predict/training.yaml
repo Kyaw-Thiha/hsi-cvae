@@ -13,3 +13,22 @@ predict:
       - [1.0, 0.0, 0.0]
       - [0.0, 1.0, 0.0]
       - [0.0, 0.0, 1.0]
+trainer:
+  callbacks:
+    - class_path: callbacks.predict_line_charts.PredictLineCharts
+      init_args:
+        out_dir: outputs/predictions_training/charts
+        start_nm: 400
+        step_nm: 10
+        class_names:
+          - gv_only
+          - npv_only
+          - soil_only
+        custom_conditions:
+          - [1.0, 0.0, 0.0]
+          - [0.0, 1.0, 0.0]
+          - [0.0, 0.0, 1.0]
+        normalize_custom_conditions: true
+        save_spectra: true
+        spectra_format: csv
+        spectra_subdir: spectra
