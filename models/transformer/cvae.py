@@ -38,9 +38,9 @@ class TransformerEncoder(nn.Module):
     ) -> None:
         super().__init__()
         self.seq_len = seq_len
-        self.input_proj = nn.Linear(1, d_model)
-        self.cond_proj = nn.Linear(cond_dim, d_model) if cond_dim > 0 else None
-        self.pos_encoding = PositionalEncoding(d_model, seq_len + 1)
+        self.input_projection = nn.Linear(1, d_model)
+        self.condition_projection = nn.Linear(cond_dim, d_model) if cond_dim > 0 else None
+        self.positional_encoding = PositionalEncoding(d_model, seq_len + 1)
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
@@ -55,21 +55,23 @@ class TransformerEncoder(nn.Module):
         self.mu_head = nn.Linear(d_model, latent_dim)
         self.logvar_head = nn.Linear(d_model, latent_dim)
 
-    def forward(self, spectrum: torch.Tensor, cond: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        bsz = spectrum.size(0)
-        tokens = self.input_proj(spectrum.unsqueeze(-1))  # (B, L, d_model)
-        if self.cond_proj is not None:
-            tokens = tokens + self.cond_proj(cond).unsqueeze(1)  # broadcast condition across sequence
-        cls = self.cls_token.expand(bsz, -1, -1)
-        x = torch.cat([cls, tokens], dim=1)
-        x = self.pos_encoding(x)
-        x = self.encoder(x)
-        cls_out = x[:, 0]
-        return self.mu_head(cls_out), self.logvar_head(cls_out)
+    def forward(self, spectrum: torch.Tensor, cond: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        batch_size = spectrum.size(0)
+        spectral_tokens = self.input_projection(spectrum.unsqueeze(-1))
+        if self.condition_projection is not None:
+            spectral_tokens = spectral_tokens + self.condition_projection(cond).unsqueeze(1)
+
+        cls_token = self.cls_token.expand(batch_size, -1, -1)
+        encoder_input = torch.cat([cls_token, spectral_tokens], dim=1)
+        encoder_input = self.positional_encoding(encoder_input)
+        encoder_output = self.encoder(encoder_input)
+        pooled_cls = encoder_output[:, 0]
+        token_states = encoder_output[:, 1:]
+        return self.mu_head(pooled_cls), self.logvar_head(pooled_cls), token_states
 
 
 class TransformerDecoder(nn.Module):
-    """Decoder attends to latent+condition memory to reconstruct the spectrum."""
+    """Decoder attends to encoder memory or latent-derived memory to reconstruct the spectrum."""
 
     def __init__(
         self,
@@ -83,8 +85,10 @@ class TransformerDecoder(nn.Module):
     ) -> None:
         super().__init__()
         self.seq_len = seq_len
-        self.latent_proj = nn.Linear(latent_dim + cond_dim, d_model)
-        self.pos_encoding = PositionalEncoding(d_model, seq_len)
+        self.d_model = d_model
+        self.latent_projection = nn.Linear(latent_dim + cond_dim, seq_len * d_model)
+        self.target_positional_encoding = PositionalEncoding(d_model, seq_len)
+        self.memory_positional_encoding = PositionalEncoding(d_model, seq_len)
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=d_model,
             nhead=n_heads,
@@ -95,13 +99,32 @@ class TransformerDecoder(nn.Module):
         self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=n_layers)
         self.output_head = nn.Linear(d_model, 1)
 
-    def forward(self, z: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
-        tgt = torch.zeros(z.size(0), self.seq_len, self.output_head.in_features, device=z.device)
-        tgt = self.pos_encoding(tgt)
-        memory = self.latent_proj(torch.cat([z, cond], dim=-1)).unsqueeze(1)
-        x = self.decoder(tgt=tgt, memory=memory)
-        recon = torch.sigmoid(self.output_head(x)).squeeze(-1)
+    def forward(self, z: torch.Tensor, cond: torch.Tensor, encoder_memory: torch.Tensor | None = None) -> torch.Tensor:
+        batch_size = z.size(0)
+        decoder_queries = torch.zeros(batch_size, self.seq_len, self.d_model, device=z.device)
+        decoder_queries = self.target_positional_encoding(decoder_queries)
+
+        if encoder_memory is None:
+            memory = self.latent_to_memory(z, cond)
+        else:
+            memory = self.memory_positional_encoding(encoder_memory)
+
+        decoded = self.decoder(tgt=decoder_queries, memory=memory)
+        recon = torch.sigmoid(self.output_head(decoded)).squeeze(-1)
         return recon
+
+    def latent_to_memory(self, z: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+        """
+        Synthesize a decoder memory sequence purely from the latent sample plus condition.
+
+        Projects the concatenated vector to shape (batch, seq_len, d_model),
+        injects positional encoding, and returns it so the decoder’s cross-attention
+        can operate even when no encoder token states are available (e.g. during sampling).
+        """
+        batch_size = z.size(0)
+        latent_condition = torch.cat([z, cond], dim=-1)
+        memory = self.latent_projection(latent_condition).view(batch_size, self.seq_len, self.d_model)
+        return self.memory_positional_encoding(memory)
 
 
 class TransformerConditionalVAE(nn.Module):
@@ -135,7 +158,7 @@ class TransformerConditionalVAE(nn.Module):
             dropout=dropout,
         )
 
-    def encode(self, spectrum: torch.Tensor, cond: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def encode(self, spectrum: torch.Tensor, cond: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         return self.encoder(spectrum, cond)
 
     @staticmethod
@@ -144,11 +167,11 @@ class TransformerConditionalVAE(nn.Module):
         eps = torch.randn_like(std)
         return mu + eps * std
 
-    def decode(self, z: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
-        return self.decoder(z, cond)
+    def decode(self, z: torch.Tensor, cond: torch.Tensor, encoder_memory: torch.Tensor | None = None) -> torch.Tensor:
+        return self.decoder(z, cond, encoder_memory)
 
     def forward(self, spectrum: torch.Tensor, cond: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        mu, logvar = self.encode(spectrum, cond)
+        mu, logvar, memory = self.encode(spectrum, cond)
         z = self.reparameterize(mu, logvar)
-        recon = self.decode(z, cond)
+        recon = self.decode(z, cond, memory)
         return recon, mu, logvar
