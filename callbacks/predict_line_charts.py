@@ -113,7 +113,7 @@ class PredictLineCharts(Callback):
         spectra = torch.cat(self._spectra, dim=0)
         num_samples, seq_len = spectra.shape
         wavelengths = (self.start_nm + self.step_nm * torch.arange(seq_len)).tolist()
-        values = ((spectra.clamp(-1.0, 1.0) + 1.0) / 2.0)
+        values = (spectra.clamp(-1.0, 1.0) + 1.0) / 2.0
 
         conditions = None
         if self._collect_conditions and self._conditions:
@@ -205,14 +205,17 @@ class PredictLineCharts(Callback):
         condition: Optional[np.ndarray],
     ) -> None:
         values = spectrum.cpu().numpy().tolist()
+        cond_headers: list[str] = []
+        cond_values: list[str] = []
+        if condition is not None and condition.size > 0:
+            cond_headers = [f"condition_{idx}" for idx in range(condition.size)]
+            cond_values = [f"{float(v):.6f}" for v in condition.tolist()]
+
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", newline="") as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow(["wavelength_nm", *[f"{w:.2f}" for w in wavelengths]])
-            writer.writerow(["reflectance", *[f"{v:.6f}" for v in values]])
-            if condition is not None and condition.size > 0:
-                cond_vals = [f"{float(v):.6f}" for v in condition.tolist()]
-                writer.writerow(["condition", *cond_vals])
+            writer.writerow([*cond_headers, "wavelength_nm", *[f"{w:.2f}" for w in wavelengths]])
+            writer.writerow([*cond_values, "reflectance", *[f"{v:.6f}" for v in values]])
 
     def _save_npy(
         self,
