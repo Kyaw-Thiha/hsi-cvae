@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-from datetime import datetime
 from pathlib import Path
 from typing import Mapping, Optional, Sequence
 
@@ -52,14 +51,10 @@ class PredictLineCharts(Callback):
         self.custom_conditions = None
         self._set_custom_conditions(custom_conditions)
 
-        self._spectra: list[torch.Tensor] = []
-        self._conditions: list[torch.Tensor] = []
-        self._collect_conditions = True
+        self._groups: dict[int, list[dict[str, torch.Tensor | Optional[int]]]] = {}
 
     def on_predict_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
-        self._spectra.clear()
-        self._conditions.clear()
-        self._collect_conditions = True
+        self._groups.clear()
         if self.custom_conditions is None:
             datamodule = getattr(trainer, "datamodule", None)
             resolved = getattr(datamodule, "resolved_predict_conditions", None)
@@ -67,70 +62,87 @@ class PredictLineCharts(Callback):
                 self._set_custom_conditions(resolved)
         if trainer.is_global_zero:
             self.out_dir.mkdir(parents=True, exist_ok=True)
-            if self.save_spectra:
-                (self.out_dir / self.spectra_subdir).mkdir(parents=True, exist_ok=True)
 
     def on_predict_batch_end(
         self,
         trainer: Trainer,
         pl_module: LightningModule,
-        outputs: torch.Tensor,
+        outputs: torch.Tensor | Mapping[str, torch.Tensor] | Sequence[torch.Tensor] | None,
         batch: Mapping[str, torch.Tensor],
         batch_idx: int,
         dataloader_idx: int = 0,
     ) -> None:
-        if outputs is None:
+        parsed = self._parse_outputs(outputs)
+        if parsed is None:
             return
-        if isinstance(outputs, (list, tuple)):
-            if not outputs:
-                return
-            outputs = outputs[0]
-        if not isinstance(outputs, torch.Tensor):
-            outputs = torch.as_tensor(outputs)
 
-        spectra = outputs.detach().cpu()
+        spectra = parsed["spectra"].detach().cpu()
         if spectra.ndim <= 1:
             return
         if spectra.ndim > 2:
             spectra = spectra.view(spectra.size(0), -1)
-        self._spectra.append(spectra.float())
 
-        if self._collect_conditions and isinstance(batch, Mapping) and self.condition_key in batch:
-            cond_tensor = torch.as_tensor(batch[self.condition_key]).detach().cpu()
+        batch_conditions = batch.get(self.condition_key)
+        cond_tensor: Optional[torch.Tensor] = None
+        if batch_conditions is not None:
+            cond_tensor = torch.as_tensor(batch_conditions).detach().cpu()
             if cond_tensor.ndim == 1:
                 cond_tensor = cond_tensor.unsqueeze(-1)
             elif cond_tensor.ndim > 2:
                 cond_tensor = cond_tensor.view(cond_tensor.size(0), -1)
-            self._conditions.append(cond_tensor.float())
+
+        sample_ids = parsed.get("sample_id")
+        if sample_ids is not None:
+            sample_ids = torch.as_tensor(sample_ids).detach().cpu().view(-1)
         else:
-            self._collect_conditions = False
-            self._conditions.clear()
+            sample_ids = torch.arange(spectra.size(0))
+
+        condition_indices = parsed.get("condition_index")
+        cond_idx_tensor: Optional[torch.Tensor] = None
+        if condition_indices is not None:
+            cond_idx_tensor = torch.as_tensor(condition_indices).detach().cpu().view(-1)
+        elif "condition_index" in batch:
+            cond_idx_tensor = torch.as_tensor(batch["condition_index"]).detach().cpu().view(-1)
+
+        for row in range(spectra.size(0)):
+            sample_key = int(sample_ids[row])
+            entry: dict[str, torch.Tensor | Optional[int]] = {
+                "spectrum": spectra[row].float(),
+            }
+            if cond_tensor is not None:
+                entry["condition"] = cond_tensor[row].float()
+            if cond_idx_tensor is not None:
+                entry["condition_index"] = int(cond_idx_tensor[row])
+            self._groups.setdefault(sample_key, []).append(entry)
 
     def on_predict_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
-        if not trainer.is_global_zero or not self._spectra:
+        if not trainer.is_global_zero or not self._groups:
             return
 
-        spectra = torch.cat(self._spectra, dim=0)
-        num_samples, seq_len = spectra.shape
+        # Determine sequence length from first stored spectrum
+        first_entry = None
+        for entries in self._groups.values():
+            if entries:
+                first_entry = entries[0]
+                break
+        if first_entry is None:
+            return
+        seq_len = first_entry["spectrum"].numel()
         wavelengths = (self.start_nm + self.step_nm * torch.arange(seq_len)).tolist()
-        values = (spectra.clamp(-1.0, 1.0) + 1.0) / 2.0
 
-        conditions = None
-        if self._collect_conditions and self._conditions:
-            conditions = torch.cat(self._conditions, dim=0)
-            if self.normalize_custom_conditions and conditions.size(1) > 0:
-                conditions = self._normalize(conditions)
-
-        self._write_chart(wavelengths, values, conditions)
-
-        if self.save_spectra:
-            self._export_spectra(wavelengths, values, conditions)
+        for sample_id in sorted(self._groups.keys()):
+            entries = self._groups[sample_id]
+            if not entries:
+                continue
+            self._write_sample_outputs(sample_id, wavelengths, entries)
 
     def _write_chart(
         self,
+        out_path: Path,
         wavelengths: list[float],
         spectra: torch.Tensor,
         conditions: Optional[torch.Tensor],
+        entries: list[dict[str, torch.Tensor | Optional[int]]],
     ) -> None:
         limit = self.max_traces or spectra.size(0)
         limit = min(limit, spectra.size(0))
@@ -139,8 +151,9 @@ class PredictLineCharts(Callback):
         cond_list = conditions[:limit] if conditions is not None else None
 
         for idx in range(limit):
-            cond_vec = cond_list[idx] if cond_list is not None else None
-            trace_name = self._resolve_trace_name(idx, cond_vec)
+            cond_vec = cond_list[idx] if cond_list is not None else entries[idx].get("condition")
+            condition_index = entries[idx].get("condition_index")
+            trace_name = self._resolve_trace_name(idx, cond_vec, condition_index)
             fig.add_trace(go.Scatter(x=wavelengths, y=data[idx].tolist(), mode="lines", name=trace_name))
 
         fig.update_layout(
@@ -151,25 +164,28 @@ class PredictLineCharts(Callback):
             template="plotly_dark",
         )
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out_path = self.out_dir / f"predict_{timestamp}.html"
         fig.write_html(str(out_path), auto_open=False, include_plotlyjs="cdn")
 
     def _export_spectra(
         self,
+        spectra_dir: Path,
         wavelengths: list[float],
         spectra: torch.Tensor,
         conditions: Optional[torch.Tensor],
+        entries: list[dict[str, torch.Tensor | Optional[int]]],
     ) -> None:
-        spectra_dir = self.out_dir / self.spectra_subdir
         cond_np = conditions.cpu().numpy() if conditions is not None else None
 
         for idx in range(spectra.size(0)):
             cond_vec = None
             if cond_np is not None:
                 cond_vec = cond_np[idx]
-            base = self._slugify(self._resolve_trace_name(idx, cond_vec))
-            base_name = f"{idx:05d}_{base}" if base else f"{idx:05d}"
+            elif "condition" in entries[idx]:
+                cond_vec = torch.as_tensor(entries[idx]["condition"]).numpy()
+
+            trace_name = self._resolve_trace_name(idx, cond_vec, entries[idx].get("condition_index"))
+            base = self._slugify(trace_name)
+            base_name = f"{idx:03d}_{base}" if base else f"{idx:03d}"
             if self.spectra_format == "csv":
                 path = spectra_dir / f"{base_name}.csv"
                 self._save_csv(path, wavelengths, spectra[idx], cond_vec)
@@ -177,12 +193,20 @@ class PredictLineCharts(Callback):
                 path = spectra_dir / f"{base_name}.npy"
                 self._save_npy(path, wavelengths, spectra[idx], cond_vec)
 
-    def _resolve_trace_name(self, index: int, condition: Optional[torch.Tensor | np.ndarray]) -> str:
+    def _resolve_trace_name(
+        self,
+        index: int,
+        condition: Optional[torch.Tensor | np.ndarray],
+        condition_index: Optional[int] = None,
+    ) -> str:
         cond_tensor: Optional[torch.Tensor]
         if isinstance(condition, np.ndarray):
             cond_tensor = torch.from_numpy(condition) if condition.size else None
         else:
             cond_tensor = condition
+
+        if condition_index is not None and self.class_names and 0 <= condition_index < len(self.class_names):
+            return str(self.class_names[condition_index])
 
         if cond_tensor is not None and self.custom_conditions is not None and cond_tensor.numel() > 0:
             diffs = torch.abs(self.custom_conditions - cond_tensor.unsqueeze(0))
@@ -206,6 +230,64 @@ class PredictLineCharts(Callback):
         if self.normalize_custom_conditions and cond_tensor.numel() > 0:
             cond_tensor = self._normalize(cond_tensor)
         self.custom_conditions = cond_tensor
+
+    def _parse_outputs(
+        self, outputs: torch.Tensor | Mapping[str, torch.Tensor] | Sequence[torch.Tensor] | None
+    ) -> Optional[dict[str, torch.Tensor]]:
+        if outputs is None:
+            return None
+        if isinstance(outputs, dict):
+            spectra = outputs.get("spectra")
+            if spectra is None:
+                spectra = next(iter(outputs.values()), None)
+            if spectra is None:
+                return None
+            result: dict[str, torch.Tensor] = {"spectra": torch.as_tensor(spectra)}
+            if "sample_id" in outputs:
+                result["sample_id"] = torch.as_tensor(outputs["sample_id"])
+            if "condition_index" in outputs:
+                result["condition_index"] = torch.as_tensor(outputs["condition_index"])
+            return result
+        if isinstance(outputs, (list, tuple)):
+            if not outputs:
+                return None
+            outputs = outputs[0]
+        return {"spectra": torch.as_tensor(outputs)}
+
+    def _write_sample_outputs(
+        self,
+        sample_id: int,
+        wavelengths: list[float],
+        entries: list[dict[str, torch.Tensor | Optional[int]]],
+    ) -> None:
+        entries_sorted = sorted(
+            entries,
+            key=lambda entry: (
+                entry.get("condition_index")
+                if isinstance(entry.get("condition_index"), int)
+                else len(entries)
+            ),
+        )
+
+        spectra = torch.stack([torch.as_tensor(entry["spectrum"]) for entry in entries_sorted], dim=0)
+        has_conditions = all("condition" in entry for entry in entries_sorted)
+        conditions = (
+            torch.stack([torch.as_tensor(entry["condition"]) for entry in entries_sorted], dim=0) if has_conditions else None
+        )
+        if conditions is not None and self.normalize_custom_conditions and conditions.size(1) > 0:
+            conditions = self._normalize(conditions)
+
+        values = (spectra.clamp(-1.0, 1.0) + 1.0) / 2.0
+
+        sample_dir = self.out_dir / f"sample_{sample_id:04d}"
+        sample_dir.mkdir(parents=True, exist_ok=True)
+        chart_path = sample_dir / f"sample_{sample_id:04d}.html"
+        self._write_chart(chart_path, wavelengths, values, conditions, entries_sorted)
+
+        if self.save_spectra:
+            spectra_dir = sample_dir / self.spectra_subdir
+            spectra_dir.mkdir(parents=True, exist_ok=True)
+            self._export_spectra(spectra_dir, wavelengths, values, conditions, entries_sorted)
 
     def _save_csv(
         self,

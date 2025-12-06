@@ -72,15 +72,16 @@ class HyperspectralDataModule(L.LightningDataModule):
             lengths=[train_len, val_len, test_len],
             generator=torch.Generator().manual_seed(self.seed),
         )
-        self.predict_set = PredictConditionDataset(
+        predict_dataset = PredictConditionDataset(
             condition_dim=self.dataset.condition_dim,
             conditions=self.predict_conditions,
             samples_per_condition=self.predict_samples_per_condition,
             fallback_condition=self.predict_fallback_condition,
             source_conditions=self.dataset.conditions,
         )
+        self.predict_set = predict_dataset
         if self.resolved_predict_conditions is None:
-            self.resolved_predict_conditions = [row.tolist() for row in self.dataset.conditions[:1]]
+            self.resolved_predict_conditions = [row.tolist() for row in predict_dataset.base_conditions]
 
     def dataloader(self, dataset: Optional[Dataset], shuffle: bool) -> DataLoader:
         if dataset is None:

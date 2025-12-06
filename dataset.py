@@ -104,14 +104,23 @@ class PredictConditionDataset(Dataset[Batch]):
         if base.ndim != 2 or base.size(1) != condition_dim:
             raise ValueError(f"PredictConditionDataset expected shape (N, {condition_dim}), got {tuple(base.shape)}")
 
-        repeats = max(int(samples_per_condition), 1)
-        if repeats > 1:
-            base = base.repeat_interleave(repeats, dim=0)
+        self.base_conditions = base
+        self.num_conditions = base.size(0)
+        self.samples_per_condition = max(int(samples_per_condition), 1)
 
-        self.conditions = base
+        sample_ids = torch.arange(self.samples_per_condition).repeat_interleave(self.num_conditions)
+        condition_indices = torch.arange(self.num_conditions).repeat(self.samples_per_condition)
+
+        self.sample_ids = sample_ids
+        self.condition_indices = condition_indices
+        self.conditions = self.base_conditions[self.condition_indices]
 
     def __len__(self) -> int:
-        return self.conditions.size(0)
+        return int(self.conditions.size(0))
 
     def __getitem__(self, idx: int) -> Batch:
-        return {"condition": self.conditions[idx]}
+        return {
+            "condition": self.conditions[idx],
+            "condition_index": torch.tensor(int(self.condition_indices[idx]), dtype=torch.long),
+            "sample_id": torch.tensor(int(self.sample_ids[idx]), dtype=torch.long),
+        }

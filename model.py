@@ -185,13 +185,33 @@ class CVAELightningModule(L.LightningModule):
         batch: dict[str, torch.Tensor],
         _: int,
         dataloader_idx: int = 0,
-    ) -> torch.Tensor:
+    ) -> dict[str, torch.Tensor]:
         conditions = batch["condition"].to(self.device)
         n = conditions.size(0)
-        z = torch.randn(n, self.latent_dim, device=conditions.device)
+
+        sample_ids = batch.get("sample_id")
+        if sample_ids is not None:
+            sample_ids = sample_ids.to(self.device).view(-1)
+        else:
+            sample_ids = torch.arange(n, device=self.device)
+
+        unique_ids, inverse_indices = torch.unique(sample_ids, sorted=True, return_inverse=True)
+        latent_samples = torch.randn(unique_ids.size(0), self.latent_dim, device=conditions.device)
+        z = latent_samples[inverse_indices]
+
         spectra = self.model.decode(z, conditions)
         spectra = spectra * 2.0 - 1.0
-        return spectra.view(n, 1, 1, -1)
+
+        payload: dict[str, torch.Tensor] = {
+            "spectra": spectra.view(n, 1, 1, -1),
+            "sample_id": sample_ids.detach().cpu(),
+        }
+
+        cond_idx = batch.get("condition_index")
+        if cond_idx is not None:
+            payload["condition_index"] = cond_idx.detach().cpu()
+
+        return payload
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
         optimizer = optim.Adam(
