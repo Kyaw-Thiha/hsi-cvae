@@ -8,7 +8,7 @@ import torch
 from lightning.pytorch.utilities.types import OptimizerLRScheduler
 from torch import optim
 
-from models.base.cvae import ConditionalVAE
+from models.mlp.cvae import ConditionalVAE
 from models.cnn.cvae import ConvConditionalVAE
 from models.transformer.cvae import TransformerConditionalVAE
 from models.losses import LOSS_REGISTRY
