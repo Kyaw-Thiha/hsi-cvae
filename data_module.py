@@ -6,7 +6,7 @@ import lightning as L
 import torch
 from torch.utils.data import DataLoader, Dataset, random_split
 
-from dataset import HyperspectralDataset
+from dataset import HyperspectralDataset, PredictConditionDataset
 
 
 class HyperspectralDataModule(L.LightningDataModule):
@@ -22,6 +22,9 @@ class HyperspectralDataModule(L.LightningDataModule):
         splits: Sequence[float] = (0.8, 0.1, 0.1),
         seed: int = 42,
         pin_memory: bool = True,
+        predict_conditions: Optional[Sequence[Sequence[float]]] = None,
+        predict_samples_per_condition: int = 10,
+        predict_fallback_condition: Optional[Sequence[float]] = None,
     ) -> None:
         super().__init__()
         self.csv_path = csv_path
@@ -32,6 +35,15 @@ class HyperspectralDataModule(L.LightningDataModule):
         self.splits = tuple(splits)
         self.seed = seed
         self.pin_memory = pin_memory
+        self.predict_conditions = predict_conditions
+        self.predict_samples_per_condition = max(int(predict_samples_per_condition), 1)
+        self.predict_fallback_condition = predict_fallback_condition
+        if predict_conditions:
+            self.resolved_predict_conditions: Optional[list[list[float]]] = [list(map(float, cond)) for cond in predict_conditions]
+        elif predict_fallback_condition is not None:
+            self.resolved_predict_conditions = [list(map(float, predict_fallback_condition))]
+        else:
+            self.resolved_predict_conditions = None
 
         self.dataset: Optional[HyperspectralDataset] = None
         self.train_set: Optional[Dataset] = None
@@ -60,7 +72,15 @@ class HyperspectralDataModule(L.LightningDataModule):
             lengths=[train_len, val_len, test_len],
             generator=torch.Generator().manual_seed(self.seed),
         )
-        self.predict_set = self.dataset
+        self.predict_set = PredictConditionDataset(
+            condition_dim=self.dataset.condition_dim,
+            conditions=self.predict_conditions,
+            samples_per_condition=self.predict_samples_per_condition,
+            fallback_condition=self.predict_fallback_condition,
+            source_conditions=self.dataset.conditions,
+        )
+        if self.resolved_predict_conditions is None:
+            self.resolved_predict_conditions = [row.tolist() for row in self.dataset.conditions[:1]]
 
     def dataloader(self, dataset: Optional[Dataset], shuffle: bool) -> DataLoader:
         if dataset is None:

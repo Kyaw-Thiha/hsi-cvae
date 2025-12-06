@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Sequence, Optional
 
 import numpy as np
 import pandas as pd
@@ -79,3 +79,39 @@ class HyperspectralDataset(Dataset[Batch]):
     @property
     def condition_dim(self) -> int:
         return len(self.condition_columns)
+
+
+class PredictConditionDataset(Dataset[Batch]):
+    """Dataset that yields only conditions for generation-time sampling."""
+
+    def __init__(
+        self,
+        condition_dim: int,
+        conditions: Optional[Sequence[Sequence[float]]] = None,
+        samples_per_condition: int = 1,
+        fallback_condition: Optional[Sequence[float]] = None,
+        source_conditions: Optional[torch.Tensor] = None,
+    ) -> None:
+        if conditions:
+            base = torch.tensor(conditions, dtype=torch.float32)
+        elif fallback_condition is not None:
+            base = torch.tensor([fallback_condition], dtype=torch.float32)
+        elif source_conditions is not None and source_conditions.size(0) > 0:
+            base = source_conditions[:1].clone()
+        else:
+            raise ValueError("Must provide either conditions, fallback_condition, or source_conditions for predict dataset")
+
+        if base.ndim != 2 or base.size(1) != condition_dim:
+            raise ValueError(f"PredictConditionDataset expected shape (N, {condition_dim}), got {tuple(base.shape)}")
+
+        repeats = max(int(samples_per_condition), 1)
+        if repeats > 1:
+            base = base.repeat_interleave(repeats, dim=0)
+
+        self.conditions = base
+
+    def __len__(self) -> int:
+        return self.conditions.size(0)
+
+    def __getitem__(self, idx: int) -> Batch:
+        return {"condition": self.conditions[idx]}

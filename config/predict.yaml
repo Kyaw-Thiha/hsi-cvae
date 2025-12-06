@@ -17,9 +17,6 @@ trainer:
         class_names:
           - gv40_np35_soil25
           - gv20_np10_soil70
-        custom_conditions:
-          - [40, 35, 25]
-          - [0.2, 0.1, 0.7]
         normalize_custom_conditions: true
         save_spectra: true
         spectra_format: csv
@@ -53,5 +50,10 @@ data:
   splits: [0.8, 0.1, 0.1]
   seed: 42
   pin_memory: true
+  predict_conditions:
+    - [40, 35, 25]
+    - [0.2, 0.1, 0.7]
+  predict_samples_per_condition: 10
+  predict_fallback_condition: [0.34, 0.33, 0.33]
 
 ckpt_path: checkpoints/cvae.ckpt

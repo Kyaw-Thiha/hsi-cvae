@@ -49,13 +49,8 @@ class PredictLineCharts(Callback):
         self.max_traces = max_traces
         self.condition_key = condition_key
 
-        if custom_conditions is not None:
-            cond_tensor = torch.tensor(custom_conditions, dtype=torch.float32)
-            if normalize_custom_conditions and cond_tensor.numel() > 0:
-                cond_tensor = self._normalize(cond_tensor)
-            self.custom_conditions = cond_tensor
-        else:
-            self.custom_conditions = None
+        self.custom_conditions = None
+        self._set_custom_conditions(custom_conditions)
 
         self._spectra: list[torch.Tensor] = []
         self._conditions: list[torch.Tensor] = []
@@ -65,6 +60,11 @@ class PredictLineCharts(Callback):
         self._spectra.clear()
         self._conditions.clear()
         self._collect_conditions = True
+        if self.custom_conditions is None:
+            datamodule = getattr(trainer, "datamodule", None)
+            resolved = getattr(datamodule, "resolved_predict_conditions", None)
+            if resolved:
+                self._set_custom_conditions(resolved)
         if trainer.is_global_zero:
             self.out_dir.mkdir(parents=True, exist_ok=True)
             if self.save_spectra:
@@ -196,6 +196,16 @@ class PredictLineCharts(Callback):
         if self.class_names:
             return str(self.class_names[index % len(self.class_names)])
         return f"spectrum_{index}"
+
+    def _set_custom_conditions(self, custom_conditions: Optional[Sequence[Sequence[float]]]) -> None:
+        if custom_conditions is None:
+            self.custom_conditions = None
+            return
+
+        cond_tensor = torch.tensor(custom_conditions, dtype=torch.float32)
+        if self.normalize_custom_conditions and cond_tensor.numel() > 0:
+            cond_tensor = self._normalize(cond_tensor)
+        self.custom_conditions = cond_tensor
 
     def _save_csv(
         self,
