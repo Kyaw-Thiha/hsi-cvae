@@ -34,9 +34,7 @@ class CVAELightningCLI(LightningCLI):
 
     def add_arguments_to_parser(self, parser):
         super().add_arguments_to_parser(parser)
-        parser.add_argument(
-            "--fit.run_batch_size_finder", type=bool, default=False, help="Whether to run the batch size finder"
-        )
+        parser.add_argument("--fit.run_batch_size_finder", type=bool, default=False, help="Whether to run the batch size finder")
         parser.add_argument(
             "--fit.batch_size_finder_mode",
             type=str,
@@ -140,7 +138,7 @@ def cli_main():
     commands = {"fit", "validate", "test", "predict", "tune"}
     if argv and argv[0] in commands:
         command, remainder = argv[0], argv[1:]
-        predict_cfg = ["--config", "config/predict/default.yaml"] if command == "predict" else []
+        predict_cfg = ["--config", "config/predict.yaml"] if command == "predict" else []
         cli_args = [command, "--config", "config/base.yaml", *predict_cfg, *remainder]
     else:
         cli_args = [
