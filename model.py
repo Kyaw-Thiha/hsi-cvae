@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass
 from typing import Any, Mapping, Optional, Union
 
@@ -46,6 +47,9 @@ class CVAELightningModule(L.LightningModule):
         lr: float = 1e-3,
         weight_decay: float = 0.0,
         scheduler_cfg: Optional[SchedulerParams] = None,
+        temperature: float = 1.0,
+        guidance_scale: float = 1.0,
+        condition_scale: float = 1.0,
     ) -> None:
         super().__init__()
         self.save_hyperparameters(ignore=["loss_params", "scheduler_cfg"])
@@ -96,6 +100,9 @@ class CVAELightningModule(L.LightningModule):
         self.latent_dim = latent_dim
         self.condition_dim = condition_dim
         self.num_classes = condition_dim
+        self.predict_temperature = float(temperature)
+        self.predict_guidance_scale = float(guidance_scale)
+        self.predict_condition_scale = float(condition_scale)
 
     def _build_model(
         self,
@@ -198,8 +205,17 @@ class CVAELightningModule(L.LightningModule):
         unique_ids, inverse_indices = torch.unique(sample_ids, sorted=True, return_inverse=True)
         latent_samples = torch.randn(unique_ids.size(0), self.latent_dim, device=conditions.device)
         z = latent_samples[inverse_indices]
+        z = z * max(self.predict_temperature, 1e-6)
 
-        spectra = self.model.decode(z, conditions)
+        scaled_conditions = conditions * self.predict_condition_scale
+
+        if math.isclose(self.predict_guidance_scale, 1.0):
+            spectra = self.model.decode(z, scaled_conditions)
+        else:
+            zero_cond = torch.zeros_like(scaled_conditions)
+            uncond = self.model.decode(z, zero_cond)
+            cond_out = self.model.decode(z, scaled_conditions)
+            spectra = uncond + self.predict_guidance_scale * (cond_out - uncond)
         spectra = spectra * 2.0 - 1.0
 
         payload: dict[str, torch.Tensor] = {

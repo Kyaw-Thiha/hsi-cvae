@@ -28,6 +28,9 @@ model:
   latent_dim: 32
   hidden_dims: [512, 256, 128]
   dropout: 0.1
+  temperature: 1.0
+  guidance_scale: 1.0
+  condition_scale: 1.0
   loss_name: beta_vae
   loss_params:
     beta: 4.0
