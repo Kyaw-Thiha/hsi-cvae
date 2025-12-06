@@ -12,6 +12,7 @@ from models.base.cvae import ConditionalVAE
 from models.cnn.cvae import ConvConditionalVAE
 from models.transformer.cvae import TransformerConditionalVAE
 from models.losses import LOSS_REGISTRY
+from models.conformer.cvae import ConformerConditionalVAE
 
 
 @dataclass
@@ -39,6 +40,7 @@ class CVAELightningModule(L.LightningModule):
         architecture: str = "mlp",
         cnn_params: Optional[Mapping[str, Any]] = None,
         transformer_params: Optional[Mapping[str, Any]] = None,
+        conformer_params: Optional[Mapping[str, Any]] = None,
         loss_name: str = "vanilla",
         loss_params: Optional[LossParams] = None,
         lr: float = 1e-3,
@@ -52,7 +54,8 @@ class CVAELightningModule(L.LightningModule):
         self.architecture = architecture.lower()
         self.cnn_params = dict(cnn_params or {})
         self.transformer_params = dict(transformer_params or {})
-        self.model: Union[ConditionalVAE, ConvConditionalVAE, TransformerConditionalVAE] = self._build_model(
+        self.conformer_params = dict(conformer_params or {})
+        self.model: Union[ConditionalVAE, ConvConditionalVAE, TransformerConditionalVAE, ConformerConditionalVAE] = self._build_model(
             input_dim=input_dim,
             condition_dim=condition_dim,
             latent_dim=latent_dim,
@@ -99,7 +102,7 @@ class CVAELightningModule(L.LightningModule):
         latent_dim: int,
         hidden_dims: list[int],
         dropout: float,
-    ) -> Union[ConditionalVAE, ConvConditionalVAE, TransformerConditionalVAE]:
+    ) -> Union[ConditionalVAE, ConvConditionalVAE, TransformerConditionalVAE, ConformerConditionalVAE]:
         if self.architecture == "mlp":
             return ConditionalVAE(
                 input_dim=input_dim,
@@ -133,6 +136,23 @@ class CVAELightningModule(L.LightningModule):
                 cond_dim=condition_dim,
                 latent_dim=latent_dim,
                 **transformer_defaults,
+            )
+        if self.architecture == "conformer":
+            conformer_defaults: dict[str, Any] = {
+                "d_model": 256,
+                "n_heads": 4,
+                "n_layers": 4,
+                "dropout": dropout,
+                "ffn_expansion": 4,
+                "conv_kernel_size": 17,
+                "use_relative_pos": True,
+            }
+            conformer_defaults.update(self.conformer_params)
+            return ConformerConditionalVAE(
+                input_dim=input_dim,
+                cond_dim=condition_dim,
+                latent_dim=latent_dim,
+                **conformer_defaults,
             )
         raise ValueError(f"Unsupported architecture: {self.architecture}")
 

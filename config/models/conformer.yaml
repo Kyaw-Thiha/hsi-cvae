@@ -1,0 +1,10 @@
+model:
+  architecture: conformer
+  conformer_params:
+    d_model: 256
+    n_heads: 4
+    n_layers: 6
+    dropout: 0.1
+    ffn_expansion: 4
+    conv_kernel_size: 17
+    use_relative_pos: true
