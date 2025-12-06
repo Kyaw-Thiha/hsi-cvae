@@ -38,11 +38,13 @@ trainer:
         start_nm: 400
         step_nm: 10
         class_names:
-          - gv40_np35_soil25
-          - gv20_np10_soil70
+          - gv_only
+          - npv_only
+          - soil_only
         custom_conditions:
-          - [40, 35, 25]
-          - [0.2, 0.1, 0.7]
+          - [1.0, 0.0, 0.0]
+          - [0.0, 1.0, 0.0]
+          - [0.0, 0.0, 1.0]
         normalize_custom_conditions: true
     - class_path: callbacks.predict_images.SavePredictionsCallback
       init_args:

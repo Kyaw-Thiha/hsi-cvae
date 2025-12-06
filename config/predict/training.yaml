@@ -1,0 +1,12 @@
+predict:
+  out_dir: outputs/predictions_training
+  line_chart:
+    out_dir: ${predict.out_dir}/charts
+    class_names:
+      - gv_only
+      - npv_only
+      - soil_only
+    custom_conditions:
+      - [1.0, 0.0, 0.0]
+      - [0.0, 1.0, 0.0]
+      - [0.0, 0.0, 1.0]

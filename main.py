@@ -140,7 +140,8 @@ def cli_main():
     commands = {"fit", "validate", "test", "predict", "tune"}
     if argv and argv[0] in commands:
         command, remainder = argv[0], argv[1:]
-        cli_args = [command, "--config", "config/base.yaml", *remainder]
+        predict_cfg = ["--config", "config/predict/default.yaml"] if command == "predict" else []
+        cli_args = [command, "--config", "config/base.yaml", *predict_cfg, *remainder]
     else:
         cli_args = [
             "--config",

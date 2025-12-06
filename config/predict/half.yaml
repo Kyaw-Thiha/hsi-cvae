@@ -1,0 +1,12 @@
+predict:
+  out_dir: outputs/predictions_half
+  line_chart:
+    out_dir: ${predict.out_dir}/charts
+    class_names:
+      - gv0_np50_soil50
+      - gv50_np0_soil50
+      - gv50_np50_soil0
+    custom_conditions:
+      - [0.0, 0.5, 0.5]
+      - [0.5, 0.0, 0.5]
+      - [0.5, 0.5, 0.0]
