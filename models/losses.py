@@ -62,3 +62,10 @@ LOSS_REGISTRY: dict[str, LossFn] = {
     "vanilla": vanilla_vae_loss,
     "beta_vae": beta_vae_loss,
 }
+
+__all__ = [
+    "LossFn",
+    "beta_vae_loss",
+    "vanilla_vae_loss",
+    "LOSS_REGISTRY",
+]

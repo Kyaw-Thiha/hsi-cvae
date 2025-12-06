@@ -11,7 +11,7 @@ from torch import optim
 from models.base.cvae import ConditionalVAE
 from models.cnn.cvae import ConvConditionalVAE
 from models.transformer.cvae import TransformerConditionalVAE
-from models.base.losses import LOSS_REGISTRY
+from models.losses import LOSS_REGISTRY
 
 
 @dataclass
