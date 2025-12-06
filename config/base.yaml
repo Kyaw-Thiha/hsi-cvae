@@ -44,7 +44,7 @@ trainer:
           - [40, 35, 25]
           - [0.2, 0.1, 0.7]
         normalize_custom_conditions: true
-    - class_path: callbacks.predict_save.SavePredictionsCallback
+    - class_path: callbacks.predict_images.SavePredictionsCallback
       init_args:
         out_dir: outputs/predict
         grid_nrow: 8
