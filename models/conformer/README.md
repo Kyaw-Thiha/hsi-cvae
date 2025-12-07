@@ -8,16 +8,18 @@ The Conformer variant augments the Transformer-based CVAE with Macaron feed-forw
 - A learned CLS token is prepended; its final state feeds the `mu/logvar` heads, while the per-wavelength token states are retained for the decoder.
 
 ## Decoder & Hybrid Memory
-The decoder mirrors the encoder blocks but operates as a Transformer decoder: it starts from a learned query template, performs self-attention, cross-attends to a memory sequence, then applies the convolution module and FFN. Memory comes from:
-- **Reconstruction**: encoder token states (positional encoding reapplied) so wavelength-specific context is available.
-- **Sampling/predict**: `_latent_to_memory(z, cond)` projects the latent+condition vector to `(batch, seq_len, d_model)` and adds positional encoding so cross-attention remains meaningful without encoder input.
+The decoder mirrors the encoder blocks but operates as a Transformer decoder: it starts from a learned query template, performs self-attention, cross-attends to a memory sequence, then applies the convolution module and FFN. During training it blends encoder token states with a latent-derived memory using an adaptive gate plus an annealed scalar so gradients flow through both paths. At sampling time the encoder branch disappears, leaving only the latent memory that the schedule has trained up.
 
 ```python
 queries = pos_enc(torch.zeros(batch, seq_len, d_model))
+latent_mem = latent_to_memory(z, cond)
 if encoder_memory is None:
-    memory = latent_to_memory(z, cond)
+    memory = latent_mem
 else:
-    memory = memory_pos_enc(encoder_memory)
+    enc_mem = memory_pos_enc(encoder_memory)
+    adaptive = sigmoid(fusion_gate([z, cond]))  # (B, 1, 1)
+    weight = schedule + (1 - schedule) * adaptive  # schedule from config
+    memory = weight * latent_mem + (1 - weight) * enc_mem
 for layer in conformer_layers:
     queries = layer(queries, memory=memory)
 recon = sigmoid(output_head(queries))
@@ -44,7 +46,7 @@ Enable the conformer CVAE with:
 ```bash
 python main.py fit --config config/base.yaml --config config/models/conformer.yaml
 ```
-The config exposes all conformer-specific parameters (`d_model`, `n_heads`, `n_layers`, `conv_kernel_size`, `ffn_expansion`, `use_relative_pos`). Customize there or stack additional configs for experiments.
+The config exposes all conformer-specific parameters (`d_model`, `n_heads`, `n_layers`, `conv_kernel_size`, `ffn_expansion`, `use_relative_pos`) plus the optional `latent_gate` block (`start`, `end`, `warmup_steps`) that controls how quickly the decoder fades encoder memory out in favor of the latent sequence. Customize there or stack additional configs for experiments.
 
 ## Sampling Notes
 - `decode(z, cond)` without `encoder_memory` synthesizes decoder memory from latent+condition, mirroring the transformer hybrid flow.

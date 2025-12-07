@@ -8,3 +8,7 @@ model:
     ffn_expansion: 4
     conv_kernel_size: 17
     use_relative_pos: true
+    latent_gate:
+      start: 0.0
+      end: 1.0
+      warmup_steps: 20000

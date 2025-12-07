@@ -1,12 +1,38 @@
 from __future__ import annotations
 
-from typing import Optional
+from dataclasses import dataclass
+from typing import Any, Mapping, Optional
 
 import torch
 from torch import nn
 
 from .attention import PositionalEncoding
 from .conformer_block import ConformerBlock
+
+
+@dataclass
+class LatentGateConfig:
+    start: float = 0.0
+    end: float = 1.0
+    warmup_steps: int = 0
+
+    @classmethod
+    def from_obj(cls, obj: LatentGateConfig | Mapping[str, Any] | None) -> LatentGateConfig:
+        if obj is None:
+            return cls()
+        if isinstance(obj, cls):
+            return obj
+        if isinstance(obj, Mapping):
+            allowed = {"start", "end", "warmup_steps"}
+            unknown = set(obj) - allowed
+            if unknown:
+                raise ValueError(f"latent_gate received unknown keys: {sorted(unknown)}")
+            return cls(
+                start=float(obj.get("start", cls.start)),
+                end=float(obj.get("end", cls.end)),
+                warmup_steps=int(obj.get("warmup_steps", cls.warmup_steps)),
+            )
+        raise TypeError(f"latent_gate must be LatentGateConfig or mapping, got {type(obj).__name__}")
 
 
 class ConformerEncoder(nn.Module):
@@ -95,15 +121,38 @@ class ConformerDecoder(nn.Module):
             ]
         )
         self.output_head = nn.Linear(d_model, 1)
+        self.fusion_gate = nn.Linear(latent_dim + cond_dim, 1)
 
-    def forward(self, z: torch.Tensor, cond: torch.Tensor, encoder_memory: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self,
+        z: torch.Tensor,
+        cond: torch.Tensor,
+        encoder_memory: Optional[torch.Tensor] = None,
+        latent_blend: float | None = None,
+    ) -> torch.Tensor:
+        """
+        Decode by cross-attending over an additive fusion of encoder tokens and latent-projected memory.
+
+        During training we mix encoder memory with latent memory using a learned gate and a scheduled
+        scalar so the decoder learns to interpret both. During sampling the encoder path disappears,
+        so the decoder falls back entirely to the latent memory.
+        """
         batch_size = z.size(0)
         decoder_queries = torch.zeros(batch_size, self.seq_len, self.d_model, device=z.device)
         decoder_queries = self.target_positional_encoding(decoder_queries)
+        latent_memory = self._latent_to_memory(z, cond)
         if encoder_memory is None:
-            memory = self._latent_to_memory(z, cond)
+            # Sampling path: rely solely on the latent-projected memory.
+            memory = latent_memory
         else:
+            # Training path: blend encoder states with latent memory via the adaptive gate.
             memory = self.memory_positional_encoding(encoder_memory)
+            gate_input = torch.cat([z, cond], dim=-1)
+            adaptive_gate = torch.sigmoid(self.fusion_gate(gate_input)).view(batch_size, 1, 1)
+            schedule = 0.0 if latent_blend is None else float(latent_blend)
+            schedule = torch.tensor(schedule, device=z.device).view(1, 1, 1).clamp_(0.0, 1.0)
+            latent_weight = schedule + (1.0 - schedule) * adaptive_gate
+            memory = latent_weight * latent_memory + (1.0 - latent_weight) * memory
         x = decoder_queries
         for layer in self.layers:
             x = layer(x, memory=memory)
@@ -132,6 +181,7 @@ class ConformerConditionalVAE(nn.Module):
         ffn_expansion: int = 4,
         conv_kernel_size: int = 17,
         use_relative_pos: bool = True,
+        latent_gate: LatentGateConfig | Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__()
         self.encoder = ConformerEncoder(
@@ -158,6 +208,14 @@ class ConformerConditionalVAE(nn.Module):
             conv_kernel_size=conv_kernel_size,
             use_relative_pos=use_relative_pos,
         )
+        gate_cfg = LatentGateConfig.from_obj(latent_gate)
+        self.latent_gate_start = gate_cfg.start
+        self.latent_gate_end = gate_cfg.end
+        self.latent_gate_warmup_steps = gate_cfg.warmup_steps
+        self.latent_gate_value: torch.Tensor
+        self.latent_gate_step: torch.Tensor
+        self.register_buffer("latent_gate_value", torch.tensor(self.latent_gate_start, dtype=torch.float32))
+        self.register_buffer("latent_gate_step", torch.tensor(0, dtype=torch.long), persistent=False)
 
     def encode(self, spectrum: torch.Tensor, cond: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         return self.encoder(spectrum, cond)
@@ -168,8 +226,23 @@ class ConformerConditionalVAE(nn.Module):
         eps = torch.randn_like(std)
         return mu + eps * std
 
+    def _step_latent_gate(self, training: bool) -> float:
+        """Advance the latent-memory blend schedule and return the current blend coefficient."""
+        if not training:
+            return self.latent_gate_end
+        if self.latent_gate_warmup_steps <= 0:
+            blend = self.latent_gate_end
+        else:
+            step = int(self.latent_gate_step.item())
+            progress = min(step / self.latent_gate_warmup_steps, 1.0)
+            blend = self.latent_gate_start + (self.latent_gate_end - self.latent_gate_start) * progress
+            self.latent_gate_step += 1
+        self.latent_gate_value = torch.tensor(blend, device=self.latent_gate_value.device)
+        return blend
+
     def decode(self, z: torch.Tensor, cond: torch.Tensor, encoder_memory: Optional[torch.Tensor] = None) -> torch.Tensor:
-        return self.decoder(z, cond, encoder_memory)
+        latent_blend = self._step_latent_gate(self.training) if encoder_memory is not None else None
+        return self.decoder(z, cond, encoder_memory, latent_blend=latent_blend)
 
     def forward(self, spectrum: torch.Tensor, cond: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         mu, logvar, memory = self.encode(spectrum, cond)
