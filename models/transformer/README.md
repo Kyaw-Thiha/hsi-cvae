@@ -8,14 +8,19 @@ This architecture wraps a conditional variational autoencoder with Transformer e
 - Prepends a learned CLS token; after the encoder stack the CLS output feeds the `mu/logvar` heads while the remaining token states are retained for the decoder.
 
 ## Decoder & Hybrid Memory
-The decoder starts from a learned query template (zero tensor + positional encoding) and applies Transformer decoder layers with cross-attention. During training/reconstruction it uses the encoder’s per-wavelength token states as memory; during sampling it synthesizes a memory sequence directly from `(z, condition)`.
+The decoder starts from a learned query template (zero tensor + positional encoding) and applies Transformer decoder layers with cross-attention. During training/reconstruction it mixes encoder token states with a latent-derived memory using an adaptive gate plus a scheduled blend so gradients flow through both paths. During sampling the encoder path is absent, so only the latent memory remains—matching the behavior the schedule anneals toward late in training.
 
 ```python
 queries = pos_enc(torch.zeros(batch, seq_len, d_model))
 if encoder_memory is None:
     memory = latent_to_memory(z, cond)  # project to (B, L, d_model) + pos enc
 else:
-    memory = memory_pos_enc(encoder_memory)
+    latent_mem = latent_to_memory(z, cond)
+    enc_mem = memory_pos_enc(encoder_memory)
+    adaptive = sigmoid(fusion_gate([z, cond]))  # (B, 1, 1)
+    schedule = latent_blend  # annealed scalar from config
+    weight = schedule + (1 - schedule) * adaptive
+    memory = weight * latent_mem + (1 - weight) * enc_mem
 output = decoder(queries, memory)
 recon = sigmoid(output_head(output))
 ```
@@ -38,7 +43,7 @@ Enable the transformer CVAE by chaining the config:
 ```bash
 python main.py fit --config config/models/transformer.yaml
 ```
-The model-specific config (`config/models/transformer.yaml`) exposes `d_model`, `n_heads`, `n_layers`, and `dropout`. Adjust these values or copy the file if you need multiple presets.
+The model-specific config (`config/models/transformer.yaml`) exposes `d_model`, `n_heads`, `n_layers`, `dropout`, plus the optional `latent_gate` block (`start`, `end`, `warmup_steps`) that controls how quickly the decoder fades encoder memory out in favor of the latent projection. Adjust these values or copy the file if you need multiple presets.
 
 ## Sampling Notes
 - `CVAELightningModule.sample` calls `self.model.decode(z, cond)` without encoder memory, so the decoder uses the synthesized latent memory. That guarantees outputs even when no input spectrum is provided.
