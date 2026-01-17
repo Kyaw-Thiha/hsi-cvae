@@ -113,9 +113,8 @@ class TransformerDecoder(nn.Module):
         super().__init__()
         self.seq_len = seq_len
         self.d_model = d_model
-        self.latent_projection = nn.Linear(latent_dim + cond_dim, seq_len * d_model)
         self.target_positional_encoding = PositionalEncoding(d_model, seq_len)
-        self.memory_positional_encoding = PositionalEncoding(d_model, seq_len)
+        self.memory_positional_encoding = PositionalEncoding(d_model, seq_len + 1)
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=d_model,
             nhead=n_heads,
@@ -125,7 +124,11 @@ class TransformerDecoder(nn.Module):
         )
         self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=n_layers)
         self.output_head = nn.Linear(d_model, 1)
-        self.fusion_gate = nn.Linear(latent_dim + cond_dim, 1)
+        self.latent_token_mlp = nn.Sequential(
+            nn.Linear(latent_dim + cond_dim, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
 
     def forward(
         self,
@@ -135,49 +138,36 @@ class TransformerDecoder(nn.Module):
         latent_blend: float | None = None,
     ) -> torch.Tensor:
         """
-        Decode by cross-attending over an addition fusion of encoder tokens and latent-projected memory.
+        Decode by cross-attending to encoder memory augmented with a latent summary token.
 
-        When encoder memory is provided (training), we first project the latent sample into a synthetic
-        memory sequence, then combine it with the encoder tokens via an adaptive gate so gradients flow
-        through both branches.
-
-        During sampling the decoder relies solely on the latent memory, matching the behavior seen late
-        in training as the scheduled blend anneals toward the latent path.
+        When encoder memory is provided (training), append a latent-derived token to the memory so the
+        decoder sees a global summary. During sampling, rely entirely on the latent token.
         """
         batch_size = z.size(0)
         decoder_queries = torch.zeros(batch_size, self.seq_len, self.d_model, device=z.device)
         decoder_queries = self.target_positional_encoding(decoder_queries)
 
-        latent_memory = self.latent_to_memory(z, cond)
+        latent_token = self.latent_to_token(z, cond)
         if encoder_memory is None:
-            # No encoder states available (e.g., sampling) so we rely entirely on latent memory.
-            memory = latent_memory
+            # No encoder states available (e.g., sampling) so we rely entirely on the latent token.
+            memory = latent_token
         else:
-            # Blend encoder states with latent memory using a learned gate.
-            memory = self.memory_positional_encoding(encoder_memory)
-            gate_input = torch.cat([z, cond], dim=-1)
-            adaptive_gate = torch.sigmoid(self.fusion_gate(gate_input)).view(batch_size, 1, 1)
             schedule = 0.0 if latent_blend is None else float(latent_blend)
             schedule = torch.tensor(schedule, device=z.device).view(1, 1, 1).clamp_(0.0, 1.0)
-            latent_weight = schedule + (1.0 - schedule) * adaptive_gate
-            memory = latent_weight * latent_memory + (1.0 - latent_weight) * memory
+            latent_token = latent_token * schedule
+            memory = torch.cat([encoder_memory, latent_token], dim=1)
+
+        memory = self.memory_positional_encoding(memory)
 
         decoded = self.decoder(tgt=decoder_queries, memory=memory)
         recon = torch.sigmoid(self.output_head(decoded)).squeeze(-1)
         return recon
 
-    def latent_to_memory(self, z: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
-        """
-        Synthesize a decoder memory sequence purely from the latent sample plus condition.
-
-        Projects the concatenated vector to shape (batch, seq_len, d_model),
-        injects positional encoding, and returns it so the decoder’s cross-attention
-        can operate even when no encoder token states are available (e.g. during sampling).
-        """
-        batch_size = z.size(0)
+    def latent_to_token(self, z: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+        """Project the latent sample plus condition into a single memory token."""
         latent_condition = torch.cat([z, cond], dim=-1)
-        memory = self.latent_projection(latent_condition).view(batch_size, self.seq_len, self.d_model)
-        return self.memory_positional_encoding(memory)
+        token = self.latent_token_mlp(latent_condition)
+        return token.unsqueeze(1)
 
 
 class TransformerConditionalVAE(nn.Module):
