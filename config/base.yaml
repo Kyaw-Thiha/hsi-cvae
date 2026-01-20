@@ -50,6 +50,9 @@ trainer:
       init_args:
         out_dir: outputs/predict
         grid_nrow: 8
+    - class_path: callbacks.train_timing.SaveTrainingTime
+      init_args:
+        out_dir: outputs/checkpoints
 
 model:
   architecture: mlp
