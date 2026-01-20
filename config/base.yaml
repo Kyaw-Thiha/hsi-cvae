@@ -7,7 +7,7 @@ fit:
   show_lr_plot: true
 
 trainer:
-  max_epochs: 200
+  max_epochs: 100
   precision: 32
   gradient_clip_val: 1.0
   default_root_dir: outputs
@@ -69,7 +69,7 @@ model:
   weight_decay: 0.0
   scheduler_cfg:
     name: cosine
-    T_max: 200
+    T_max: 100
 
 data:
   csv_path: data/simpler_data_rwc.csv
