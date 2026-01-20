@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional, Sequence
 
 import lightning as L
 import torch
+import json
 from torch.utils.data import DataLoader, Dataset, random_split
 
 from dataset import HyperspectralDataset, PredictConditionDataset
@@ -72,6 +74,18 @@ class HyperspectralDataModule(L.LightningDataModule):
             lengths=[train_len, val_len, test_len],
             generator=torch.Generator().manual_seed(self.seed),
         )
+        split_path = Path("outputs/checkpoints") / f"data_{self.seed}.json"
+        split_path.parent.mkdir(parents=True, exist_ok=True)
+        split_payload = {
+            "seed": int(self.seed),
+            "csv_path": str(self.csv_path),
+            "splits": [float(value) for value in self.splits],
+            "n_total": int(n_total),
+            "train_indices": list(self.train_set.indices),
+            "val_indices": list(self.val_set.indices),
+            "test_indices": list(self.test_set.indices),
+        }
+        split_path.write_text(json.dumps(split_payload, indent=2), encoding="utf-8")
         predict_dataset = PredictConditionDataset(
             condition_dim=self.dataset.condition_dim,
             conditions=self.predict_conditions,
