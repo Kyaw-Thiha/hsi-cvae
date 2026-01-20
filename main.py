@@ -1,6 +1,8 @@
 import sys
+from pathlib import Path
 
 import torch
+import yaml
 
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.cli import LightningCLI
@@ -46,6 +48,7 @@ class CVAELightningCLI(LightningCLI):
 
     def before_fit(self):
         self._materialize_model_name_placeholders()
+        self._save_init_artifacts()
         tuner = Tuner(self.trainer)
         fit_config = getattr(self.config, "fit", None)
         run_batch_size_finder = getattr(fit_config, "run_batch_size_finder", False) if fit_config else False
@@ -98,6 +101,26 @@ class CVAELightningCLI(LightningCLI):
                 else:
                     print("⚠️ Could not find optimal learning rate")
             exit(0)
+
+    def _save_init_artifacts(self) -> None:
+        ckpt_dir = Path("outputs/checkpoints")
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+        arch_name = getattr(self.model, "architecture", "model")
+        init_state_path = ckpt_dir / f"init_state_dict_{arch_name}.pt"
+        torch.save(self.model.state_dict(), init_state_path)
+
+        cfg = self.config
+        if hasattr(cfg, "as_dict"):
+            cfg_dict = cfg.as_dict()
+        elif hasattr(cfg, "to_dict"):
+            cfg_dict = cfg.to_dict()
+        else:
+            cfg_dict = vars(cfg)
+
+        init_cfg_path = ckpt_dir / f"init_config_{arch_name}.yaml"
+        with init_cfg_path.open("w", encoding="utf-8") as handle:
+            yaml.safe_dump(cfg_dict, handle, sort_keys=False)
 
     # ----------------------------------
     # Setting the correct model name for checkpoints saving
