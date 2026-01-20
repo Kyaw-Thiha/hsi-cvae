@@ -42,3 +42,14 @@ python main.py fit --config config/models/mlp.yaml --run_batch_size_finder true 
 ```bash
 python main.py fit --config config/models/mlp.yaml --run_lr_finder true
 ```
+
+---
+## Configs
+### MLP Configs
+- config/models/mlp/mlp_5m.yaml (depth 10, ~5.02M params)
+- config/models/mlp/mlp_10m.yaml (depth 19, ~9.76M params)
+- config/models/mlp/mlp_20m.yaml (depth 38, ~19.78M params)
+- config/models/mlp/mlp_40m.yaml (depth 76, ~39.82M params)
+- config/models/mlp/mlp_80m.yaml (depth 153, ~80.43M params)
+
+
