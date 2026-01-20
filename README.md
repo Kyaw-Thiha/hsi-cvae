@@ -52,4 +52,9 @@ python main.py fit --config config/models/mlp.yaml --run_lr_finder true
 - config/models/mlp/mlp_40m.yaml (depth 76, ~39.82M params)
 - config/models/mlp/mlp_80m.yaml (depth 153, ~80.43M params)
 
-
+### CNN Configs
+- config/models/cnn/cnn_5m.yaml (width 128, depth 24, ~4.97M)
+- config/models/cnn/cnn_10m.yaml (width 192, depth 28, ~10.04M)
+- config/models/cnn/cnn_20m.yaml (width 256, depth 38, ~19.99M)
+- config/models/cnn/cnn_40m.yaml (width 384, depth 37, ~40.00M)
+- config/models/cnn/cnn_80m.yaml (width 512, depth 45, ~80.10M)
