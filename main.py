@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from typing import Any, Mapping, Sequence
 
 import torch
 import yaml
@@ -120,7 +121,21 @@ class CVAELightningCLI(LightningCLI):
 
         init_cfg_path = ckpt_dir / f"init_config_{arch_name}.yaml"
         with init_cfg_path.open("w", encoding="utf-8") as handle:
-            yaml.safe_dump(cfg_dict, handle, sort_keys=False)
+            yaml.safe_dump(self._to_serializable(cfg_dict), handle, sort_keys=False)
+
+    @staticmethod
+    def _to_serializable(value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {str(k): CVAELightningCLI._to_serializable(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [CVAELightningCLI._to_serializable(v) for v in value]
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        if hasattr(value, "__fspath__"):
+            return str(value)
+        return str(value)
 
     # ----------------------------------
     # Setting the correct model name for checkpoints saving
