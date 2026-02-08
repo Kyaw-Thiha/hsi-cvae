@@ -203,6 +203,7 @@ class RepeatZDecoder(nn.Module):
         n_heads: int,
         n_layers: int,
         dropout: float,
+        use_local_refiner: bool,
         wavelengths_nm: torch.Tensor,
     ) -> None:
         super().__init__()
@@ -210,6 +211,27 @@ class RepeatZDecoder(nn.Module):
         self.latent_to_token = nn.Linear(latent_dim, d_model)
         self.pos_enc = WavelengthAwarePositionalEncoding(d_model=d_model, wavelengths_nm=wavelengths_nm)
         self.layers = nn.ModuleList([RepeatZTransformerBlock(d_model, n_heads, cond_dim, dropout) for _ in range(n_layers)])
+
+        self.use_local_refiner = use_local_refiner
+        self.local_refiner = None
+        if self.use_local_refiner:
+            # Local depthwise-separable convolutions over wavelength axis.
+            self.local_refiner = nn.Sequential(
+                # Stage 1: broad local context per channel (~70nm window).
+                nn.Conv1d(d_model, d_model, kernel_size=7, padding=3, groups=d_model, bias=False),
+                nn.GELU(),
+                # Pointwise expansion/mixing across channels.
+                nn.Conv1d(d_model, 2 * d_model, kernel_size=1),
+                nn.GELU(),
+                # Project back to model width.
+                nn.Conv1d(2 * d_model, d_model, kernel_size=1),
+                # Stage 2: finer local detail per channel (~30nm window).
+                nn.Conv1d(d_model, d_model, kernel_size=3, padding=1, groups=d_model, bias=False),
+                nn.GELU(),
+                # Final channel mixing before residual add.
+                nn.Conv1d(d_model, d_model, kernel_size=1),
+            )
+
         self.out_head = nn.Linear(d_model, 1)
 
     def forward(self, z: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
@@ -217,6 +239,12 @@ class RepeatZDecoder(nn.Module):
         x = self.pos_enc(x)
         for layer in self.layers:
             x = layer(x, cond)
+
+        if self.local_refiner is not None:
+            x_t = x.transpose(1, 2)  # (B, L, D) -> (B, D, L)
+            x_local = self.local_refiner(x_t).transpose(1, 2)
+            x = x + x_local
+
         return torch.sigmoid(self.out_head(x)).squeeze(-1)
 
 
@@ -231,6 +259,7 @@ class TransformerRepeatZConditionalVAE(nn.Module):
         encoder_layers: int = 6,
         decoder_layers: int = 4,
         dropout: float = 0.1,
+        decoder_use_local_refiner: bool = True,
         wavelength_start_nm: int = 400,
         wavelength_end_nm: int = 2490,
         wavelength_step_nm: int = 10,
@@ -261,6 +290,7 @@ class TransformerRepeatZConditionalVAE(nn.Module):
             n_heads=n_heads,
             n_layers=decoder_layers,
             dropout=dropout,
+            use_local_refiner=decoder_use_local_refiner,
             wavelengths_nm=wavelengths_nm,
         )
 

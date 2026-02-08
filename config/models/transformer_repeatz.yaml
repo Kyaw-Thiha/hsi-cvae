@@ -7,3 +7,4 @@ model:
     encoder_layers: 6
     decoder_layers: 4
     dropout: 0.1
+    decoder_use_local_refiner: true
