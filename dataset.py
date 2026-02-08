@@ -40,11 +40,11 @@ class HyperspectralDataset(Dataset[Batch]):
 
     @staticmethod
     def normalize_reflectance(values: np.ndarray) -> np.ndarray:
-        """Min-max normalize each spectrum row so reflectance stays in [0, 1]."""
-        mins = values.min(axis=1, keepdims=True)
-        maxs = values.max(axis=1, keepdims=True)
-        ranges = np.clip(maxs - mins, a_min=1e-6, a_max=None)
-        return (values - mins) / ranges
+        """Min-max normalize using a single dataset-wide range to keep absolute brightness information."""
+        min_value = float(values.min())
+        max_value = float(values.max())
+        value_range = max(max_value - min_value, 1e-6)
+        return (values - min_value) / value_range
 
     @staticmethod
     def _infer_spectral_columns(columns: Iterable[str], spectral_range: tuple[int, int, int]) -> list[str]:

@@ -136,7 +136,8 @@ class RepeatZTransformerBlock(nn.Module):
         self.film_ffn = FiLM(cond_dim=cond_dim, d_model=d_model)
         self.ffn = nn.Sequential(
             nn.Linear(d_model, 4 * d_model),
-            nn.GELU(),
+            # nn.GELU(),
+            nn.ReLU(),
             nn.Linear(4 * d_model, d_model),
         )
         self.drop_ffn = nn.Dropout(dropout)
