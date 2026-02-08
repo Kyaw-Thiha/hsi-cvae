@@ -23,7 +23,7 @@ class PureLineCharts(Callback):
     def __init__(
         self,
         csv_path: str = "data/simpler_data_rwc.csv",
-        out_dir: str = "outputs/line_charts_pure",
+        out_dir: str = "outputs/line_charts/pure",
         start_nm: int = 400,
         end_nm: int = 2490,
         step_nm: int = 10,

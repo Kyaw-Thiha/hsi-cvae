@@ -49,7 +49,7 @@ trainer:
     - class_path: callbacks.pure_line_charts.PureLineCharts
       init_args:
         csv_path: data/simpler_data_rwc.csv
-        out_dir: outputs/line_charts_pure
+        out_dir: outputs/line_charts/pure
         start_nm: 400
         end_nm: 2490
         step_nm: 10

@@ -106,25 +106,22 @@ def scale_vae_loss(
     logvar: torch.Tensor,
     params: dict[str, Any] | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-    """Scale-VAE loss form; assumes reconstruction used scaled latent means upstream."""
+    """Scale-VAE objective; assumes reconstruction used scaled latent means upstream."""
     params = params or {}
-    beta = float(params.get("beta", 1.0))
     recon_metric = params.get("recon", "mse")
     reduction = params.get("reduction", "mean")
-    grad_weight = float(params.get("grad_weight", 0.0))
 
     if recon_metric == "l1":
         recon_loss = F.l1_loss(recon, target, reduction="none").mean(dim=1)
     else:
         recon_loss = F.mse_loss(recon, target, reduction="none").mean(dim=1)
 
-    grad_loss = _gradient_loss_per_sample(recon, target, params)
     kld = _kl_divergence(mu, logvar)
-    loss = recon_loss + grad_weight * grad_loss + beta * kld
+    loss = recon_loss + kld
     reduced = loss.mean() if reduction == "mean" else loss.sum()
     return reduced, {
         "recon_loss": recon_loss.mean(),
-        "grad_loss": grad_loss.mean(),
+        "grad_loss": torch.zeros((), device=recon.device, dtype=recon.dtype),
         "kl_loss": kld.mean(),
     }
 

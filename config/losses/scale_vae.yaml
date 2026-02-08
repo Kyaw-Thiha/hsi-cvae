@@ -2,15 +2,8 @@ model:
   loss_name: scale_vae
   lr: 0.0001
   loss_params:
-    des_std: 0.5
-    f_epo: 100
+    des_std: 1.0
+    f_epo: 10
     scale_eps: 1.0e-6
-    scale_min: 0.5
-    scale_max: 4.0
-    beta: 0.5
     recon: mse
 
-    # Gradient-Loss Params
-    grad_weight: 0.08
-    grad_metric: mse
-    grad_diff_order: 1

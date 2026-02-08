@@ -68,7 +68,7 @@ When `loss_name: scale_vae`:
 
 1. Encode as usual to get `mu`, `logvar` (and memory for transformer/conformer).
 2. Compute per-dim scaling factor from batch mean spread:
-   - `f_batch = des_std / std(mu, dim=0)` with `scale_eps` clamp for stability.
+   - `f_batch = des_std / std(mu, dim=0)` with `scale_eps` as denominator floor for stability.
 3. Choose factor by epoch rule:
    - if `current_epoch <= f_epo`: use `f_batch`
    - else: use stored epoch-average `scale_f_bar`
@@ -78,6 +78,7 @@ When `loss_name: scale_vae`:
 6. Compute loss with:
    - reconstruction from scaled sample
    - KL from original `mu/logvar`
+   - objective form: `recon + KL` (no beta weighting, no gradient auxiliary term for Scale-VAE mode)
 
 Epoch hooks:
 - `on_train_epoch_start`: reset accumulators
@@ -91,11 +92,13 @@ For `predict_step` and `sample`:
 - Decode as usual
 
 So generation is consistent with Scale-VAE training.
+For validation/test in Scale-VAE mode, `scale_f_bar` is also used (deterministic, aligned with generation).
 
 ## Loss entry (`models/losses.py`)
 
 Added `scale_vae_loss` in `LOSS_REGISTRY`.
-It keeps standard recon + beta*KL structure, while Scale-VAE's main distinction is handled upstream in latent sampling.
+It computes `recon + KL` directly.  
+Scale-VAE's distinct behavior still comes from latent-mean scaling in `model.py` before decoding.
 
 ---
 
@@ -105,11 +108,12 @@ Use:
 - `config/losses/scale_vae.yaml`
 
 Current defaults:
-- `des_std: 1.0`
-- `f_epo: 10`
+- `des_std: 0.5`
+- `f_epo: 100`
 - `scale_eps: 1e-6`
-- `beta: 1.0`
 - `recon: mse`
+
+Note: `scale_min`, `scale_max`, `beta`, and gradient-loss knobs are not part of paper-faithful Scale-VAE mode here.
 
 Example:
 
@@ -126,6 +130,19 @@ python main.py fit \
   --config config/models/mlp.yaml \
   --config config/losses/scale_vae.yaml \
   --data.num_workers=0
+```
+
+Switch losses by config (kept fully config-driven):
+
+```bash
+# Vanilla VAE
+python main.py fit --config config/models/mlp.yaml --config config/losses/vanilla.yaml
+
+# Beta-VAE
+python main.py fit --config config/models/mlp.yaml --config config/losses/beta_vae.yaml
+
+# Scale-VAE (paper-faithful in this repo)
+python main.py fit --config config/models/mlp.yaml --config config/losses/scale_vae.yaml
 ```
 
 ---
