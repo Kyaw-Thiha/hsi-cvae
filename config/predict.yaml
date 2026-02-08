@@ -31,10 +31,6 @@ model:
   temperature: 1.0
   guidance_scale: 1.0
   condition_scale: 1.0
-  loss_name: beta_vae
-  loss_params:
-    beta: 4.0
-    recon: mse
   lr: 0.001
   weight_decay: 0.0
   scheduler_cfg:

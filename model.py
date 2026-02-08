@@ -20,11 +20,17 @@ from models.losses import LOSS_REGISTRY
 @dataclass
 class LossParams:
     """Loss hyperparameters, including Scale-VAE scaling controls."""
+
     beta: float = 4.0
     recon: str = "mse"
     des_std: float = 1.0
     f_epo: int = 10
     scale_eps: float = 1e-6
+
+    # Gradient loss params
+    grad_weight: float = 0.0
+    grad_metric: str = "mse"
+    grad_diff_order: int = 1
 
 
 @dataclass
@@ -36,6 +42,7 @@ class SchedulerParams:
 @dataclass
 class WavelengthParams:
     """Model-side wavelength metadata for spectral positional features."""
+
     start_nm: int = 400
     end_nm: int = 2490
     step_nm: int = 10
@@ -43,6 +50,7 @@ class WavelengthParams:
 
 class CVAELightningModule(L.LightningModule):
     """LightningModule wrapping the Conditional VAE for training/eval."""
+
     scale_f_bar: torch.Tensor
     scale_f_accum: torch.Tensor
     scale_f_count: torch.Tensor
@@ -95,14 +103,12 @@ class CVAELightningModule(L.LightningModule):
             TransformerConditionalVAE,
             TransformerRepeatZConditionalVAE,
             ConformerConditionalVAE,
-        ] = (
-            self._build_model(
-                input_dim=input_dim,
-                condition_dim=condition_dim,
-                latent_dim=latent_dim,
-                hidden_dims=hidden_dims,
-                dropout=dropout,
-            )
+        ] = self._build_model(
+            input_dim=input_dim,
+            condition_dim=condition_dim,
+            latent_dim=latent_dim,
+            hidden_dims=hidden_dims,
+            dropout=dropout,
         )
 
         # Loss Function
@@ -165,9 +171,7 @@ class CVAELightningModule(L.LightningModule):
             raise ValueError("wavelength_params must satisfy (end_nm - start_nm) % step_nm == 0.")
         n_wavelengths = (span // step) + 1
         if n_wavelengths != input_dim:
-            raise ValueError(
-                f"wavelength_params imply {n_wavelengths} bands but model.input_dim is {input_dim}."
-            )
+            raise ValueError(f"wavelength_params imply {n_wavelengths} bands but model.input_dim is {input_dim}.")
         return torch.arange(start, end + 1, step, dtype=torch.float32)
 
     def _build_model(
@@ -271,9 +275,7 @@ class CVAELightningModule(L.LightningModule):
         mu, logvar = seq_model.encode(spectrum, condition)
         return mu, logvar, None
 
-    def _decode_with_optional_memory(
-        self, z: torch.Tensor, condition: torch.Tensor, memory: torch.Tensor | None
-    ) -> torch.Tensor:
+    def _decode_with_optional_memory(self, z: torch.Tensor, condition: torch.Tensor, memory: torch.Tensor | None) -> torch.Tensor:
         """Decode latent samples, passing encoder memory when the decoder supports it."""
         if self.architecture in {"transformer", "conformer"}:
             token_model = cast(Union[TransformerConditionalVAE, ConformerConditionalVAE], self.model)
@@ -304,9 +306,7 @@ class CVAELightningModule(L.LightningModule):
             batch_factor = self._compute_scale_factor(mu)
             scale_f_accum = cast(torch.Tensor, self.scale_f_accum)
             scale_f_count = cast(torch.Tensor, self.scale_f_count)
-            scale_f_accum.add_(
-                batch_factor.detach().to(device=scale_f_accum.device, dtype=scale_f_accum.dtype)
-            )
+            scale_f_accum.add_(batch_factor.detach().to(device=scale_f_accum.device, dtype=scale_f_accum.dtype))
             scale_f_count.add_(1)
             if (self.current_epoch + 1) <= f_epo:
                 return batch_factor

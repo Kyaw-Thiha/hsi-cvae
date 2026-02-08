@@ -7,7 +7,7 @@ by FINCH satellite of University of Toronto Aerospace Team.
 ```bash
 python main.py fit --config config/models/mlp.yaml
 ```
-`config/base.yaml` loads automatically. Swap the model config for other backends:
+`config/base.yaml` and `config/losses/beta_vae.yaml` load automatically. Swap the model config for other backends:
 - MLP: `--config config/models/mlp.yaml`
 - CNN: `--config config/models/cnn.yaml`
 - Transformer: `--config config/models/transformer.yaml`
@@ -15,7 +15,7 @@ python main.py fit --config config/models/mlp.yaml
 - Conformer: `--config config/models/conformer.yaml`
 
 ### 🔍 Predict / Sampling
-Predict commands automatically include `config/base.yaml` and `config/predict.yaml`. Append additional configs to pick the model and custom predict grids:
+Predict commands automatically include `config/base.yaml`, `config/losses/beta_vae.yaml`, and `config/predict.yaml`. Append additional configs to pick the model and custom predict grids:
 ```bash
 # Transformer model + half-sum predict grid
 python main.py predict --config config/models/transformer.yaml --config config/predict/half.yaml --ckpt_path outputs/run/checkpoints/best/transformer.ckpt

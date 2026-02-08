@@ -1,0 +1,6 @@
+model:
+  loss_name: vanilla
+  loss_params:
+    grad_weight: 0.0
+    grad_metric: mse
+    grad_diff_order: 1

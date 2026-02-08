@@ -6,3 +6,8 @@ model:
     scale_eps: 1.0e-6
     beta: 1.0
     recon: mse
+
+    # Gradient-Loss Params
+    grad_weight: 0.2
+    grad_metric: mse
+    grad_diff_order: 1

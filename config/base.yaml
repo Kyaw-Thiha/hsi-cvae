@@ -65,10 +65,6 @@ model:
     step_nm: 10
   hidden_dims: [512, 256, 128]
   dropout: 0.1
-  loss_name: beta_vae
-  loss_params:
-    beta: 4.0
-    recon: mse
   lr: 0.001
   weight_decay: 0.0
   scheduler_cfg:
