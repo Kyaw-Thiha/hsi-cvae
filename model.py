@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import asdict, dataclass
-from typing import Any, Mapping, Optional, Union
+from typing import Any, Mapping, Optional, Union, cast
 
 import lightning as L
 import torch
@@ -18,8 +18,12 @@ from models.losses import LOSS_REGISTRY
 
 @dataclass
 class LossParams:
+    """Loss hyperparameters, including Scale-VAE scaling controls."""
     beta: float = 4.0
     recon: str = "mse"
+    des_std: float = 1.0
+    f_epo: int = 10
+    scale_eps: float = 1e-6
 
 
 @dataclass
@@ -30,6 +34,9 @@ class SchedulerParams:
 
 class CVAELightningModule(L.LightningModule):
     """LightningModule wrapping the Conditional VAE for training/eval."""
+    scale_f_bar: torch.Tensor
+    scale_f_accum: torch.Tensor
+    scale_f_count: torch.Tensor
 
     def __init__(
         self,
@@ -73,6 +80,7 @@ class CVAELightningModule(L.LightningModule):
         if loss_name not in LOSS_REGISTRY:
             raise ValueError(f"Unsupported loss: {loss_name}")
         self.loss_fn = LOSS_REGISTRY[loss_name]
+        self.loss_name = loss_name
         if loss_params is None:
             self.loss_params: dict[str, Any] = {}
         elif isinstance(loss_params, LossParams):
@@ -103,6 +111,15 @@ class CVAELightningModule(L.LightningModule):
         self.predict_temperature = float(temperature)
         self.predict_guidance_scale = float(guidance_scale)
         self.predict_condition_scale = float(condition_scale)
+
+        # Scale-VAE state (persist f_bar for inference-time scaling)
+        self.register_buffer("scale_f_bar", torch.ones(latent_dim, dtype=torch.float32))
+        self.register_buffer("scale_f_accum", torch.zeros(latent_dim, dtype=torch.float32), persistent=False)
+        self.register_buffer("scale_f_count", torch.tensor(0, dtype=torch.long), persistent=False)
+
+    def _is_scale_vae(self) -> bool:
+        """Return whether the active loss selection is Scale-VAE."""
+        return self.loss_name == "scale_vae"
 
     def _build_model(
         self,
@@ -169,14 +186,109 @@ class CVAELightningModule(L.LightningModule):
         recon, _, _ = self.model(spectrum, condition)
         return recon
 
+    def _encode_with_optional_memory(
+        self, spectrum: torch.Tensor, condition: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+        """Encode inputs and optionally return token memory for attention-based decoders."""
+        if self.architecture in {"transformer", "conformer"}:
+            token_model = cast(Union[TransformerConditionalVAE, ConformerConditionalVAE], self.model)
+            mu, logvar, memory = token_model.encode(spectrum, condition)
+            return mu, logvar, memory
+        seq_model = cast(Union[ConditionalVAE, ConvConditionalVAE], self.model)
+        mu, logvar = seq_model.encode(spectrum, condition)
+        return mu, logvar, None
+
+    def _decode_with_optional_memory(
+        self, z: torch.Tensor, condition: torch.Tensor, memory: torch.Tensor | None
+    ) -> torch.Tensor:
+        """Decode latent samples, passing encoder memory when the decoder supports it."""
+        if self.architecture in {"transformer", "conformer"}:
+            token_model = cast(Union[TransformerConditionalVAE, ConformerConditionalVAE], self.model)
+            return token_model.decode(z, condition, memory)
+        seq_model = cast(Union[ConditionalVAE, ConvConditionalVAE], self.model)
+        return seq_model.decode(z, condition)
+
+    def _compute_scale_factor(self, mu: torch.Tensor) -> torch.Tensor:
+        """Compute per-latent-dimension Scale-VAE factor from batch statistics."""
+        des_std = float(self.loss_params.get("des_std", 1.0))
+        eps = float(self.loss_params.get("scale_eps", 1e-6))
+        mu_std = mu.detach().std(dim=0, unbiased=False).clamp_min(eps)
+        factor = torch.full_like(mu_std, des_std) / mu_std
+        return factor.to(device=mu.device, dtype=mu.dtype)
+
+    def _select_scale_factor(self, mu: torch.Tensor, stage: str) -> torch.Tensor:
+        """Pick batch factor or epoch-average factor based on stage and warmup epoch."""
+        f_epo = max(int(self.loss_params.get("f_epo", 0)), 0)
+
+        if stage == "train":
+            batch_factor = self._compute_scale_factor(mu)
+            scale_f_accum = cast(torch.Tensor, self.scale_f_accum)
+            scale_f_count = cast(torch.Tensor, self.scale_f_count)
+            scale_f_accum.add_(
+                batch_factor.detach().to(device=scale_f_accum.device, dtype=scale_f_accum.dtype)
+            )
+            scale_f_count.add_(1)
+            if (self.current_epoch + 1) <= f_epo:
+                return batch_factor
+            scale_f_bar = cast(torch.Tensor, self.scale_f_bar)
+            return scale_f_bar.to(device=mu.device, dtype=mu.dtype)
+
+        if (self.current_epoch + 1) <= f_epo:
+            return self._compute_scale_factor(mu)
+        scale_f_bar = cast(torch.Tensor, self.scale_f_bar)
+        return scale_f_bar.to(device=mu.device, dtype=mu.dtype)
+
+    def _apply_inference_scale(self, z: torch.Tensor) -> torch.Tensor:
+        """Apply learned Scale-VAE latent scaling at inference/prediction time."""
+        if not self._is_scale_vae():
+            return z
+        scale_f_bar = cast(torch.Tensor, self.scale_f_bar)
+        return z * scale_f_bar.to(device=z.device, dtype=z.dtype)
+
     def _shared_step(self, batch: dict[str, torch.Tensor], stage: str) -> torch.Tensor:
+        """Run one train/val/test step with either standard VAE or Scale-VAE flow."""
         spectra, cond = batch["spectrum"], batch["condition"]
-        recon, mu, logvar = self.model(spectra, cond)
-        loss, metrics = self.loss_fn(spectra, recon, mu, logvar, self.loss_params)
+
+        if self._is_scale_vae():
+            mu, logvar, memory = self._encode_with_optional_memory(spectra, cond)
+            scale_factor = self._select_scale_factor(mu, stage)
+            std = torch.exp(0.5 * logvar)
+            eps = torch.randn_like(std)
+            z = mu * scale_factor.unsqueeze(0) + eps * std
+            recon = self._decode_with_optional_memory(z, cond, memory)
+            loss, metrics = self.loss_fn(spectra, recon, mu, logvar, self.loss_params)
+            metrics = dict(metrics)
+            metrics["scale_factor_mean"] = scale_factor.mean()
+            metrics["scale_factor_std"] = scale_factor.std(unbiased=False)
+        else:
+            recon, mu, logvar = self.model(spectra, cond)
+            loss, metrics = self.loss_fn(spectra, recon, mu, logvar, self.loss_params)
+
         self.log(f"{stage}_loss", loss, prog_bar=True)
         for name, value in metrics.items():
             self.log(f"{stage}_{name}", value, prog_bar=False, logger=True)
         return loss
+
+    def on_train_epoch_start(self) -> None:
+        """Reset epoch accumulators used to estimate the next Scale-VAE average factor."""
+        if not self._is_scale_vae():
+            return
+        cast(torch.Tensor, self.scale_f_accum).zero_()
+        cast(torch.Tensor, self.scale_f_count).zero_()
+
+    def on_train_epoch_end(self) -> None:
+        """Finalize epoch-average latent scaling factor for subsequent epochs."""
+        if not self._is_scale_vae():
+            return
+        scale_f_count = cast(torch.Tensor, self.scale_f_count)
+        scale_f_accum = cast(torch.Tensor, self.scale_f_accum)
+        scale_f_bar = cast(torch.Tensor, self.scale_f_bar)
+        count = int(scale_f_count.item())
+        if count <= 0:
+            return
+        next_factor = scale_f_accum / float(count)
+        scale_f_bar.copy_(next_factor.to(device=scale_f_bar.device, dtype=scale_f_bar.dtype))
+        self.log("train_scale_factor_mean", scale_f_bar.mean(), prog_bar=False, logger=True)
 
     def training_step(self, batch: dict[str, torch.Tensor], _) -> torch.Tensor:
         return self._shared_step(batch, "train")
@@ -193,6 +305,7 @@ class CVAELightningModule(L.LightningModule):
         _: int,
         dataloader_idx: int = 0,
     ) -> dict[str, torch.Tensor]:
+        """Generate conditioned spectra for prediction callbacks and exporters."""
         conditions = batch["condition"].to(self.device)
         n = conditions.size(0)
 
@@ -206,6 +319,7 @@ class CVAELightningModule(L.LightningModule):
         latent_samples = torch.randn(unique_ids.size(0), self.latent_dim, device=conditions.device)
         z = latent_samples[inverse_indices]
         z = z * max(self.predict_temperature, 1e-6)
+        z = self._apply_inference_scale(z)
 
         scaled_conditions = conditions * self.predict_condition_scale
 
@@ -292,6 +406,7 @@ class CVAELightningModule(L.LightningModule):
         z = torch.randn(n_samples, self.latent_dim, device=target_device)
         if temperature != 1.0:
             z = z * temperature
+        z = self._apply_inference_scale(z)
         recon = self.model.decode(z, cond)
         recon = recon * 2.0 - 1.0
         return recon.view(n_samples, 1, 1, -1)

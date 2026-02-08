@@ -13,6 +13,7 @@ LossFn = Callable[
 
 
 def _kl_divergence(mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+    """Compute per-sample KL divergence against a standard normal prior."""
     return -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1)
 
 
@@ -23,6 +24,7 @@ def vanilla_vae_loss(
     logvar: torch.Tensor,
     params: dict[str, Any] | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Standard VAE objective with MSE reconstruction and unit KL weight."""
     params = params or {}
     reduction = params.get("reduction", "mean")
     recon_loss = F.mse_loss(recon, target, reduction="none").mean(dim=1)
@@ -41,6 +43,7 @@ def beta_vae_loss(
     logvar: torch.Tensor,
     params: dict[str, Any] | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Beta-VAE objective with configurable reconstruction metric."""
     params = params or {}
     beta = params.get("beta", 4.0)
     recon_metric = params.get("recon", "mse")
@@ -58,14 +61,43 @@ def beta_vae_loss(
     }
 
 
+def scale_vae_loss(
+    target: torch.Tensor,
+    recon: torch.Tensor,
+    mu: torch.Tensor,
+    logvar: torch.Tensor,
+    params: dict[str, Any] | None = None,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Scale-VAE loss form; assumes reconstruction used scaled latent means upstream."""
+    params = params or {}
+    beta = float(params.get("beta", 1.0))
+    recon_metric = params.get("recon", "mse")
+    reduction = params.get("reduction", "mean")
+
+    if recon_metric == "l1":
+        recon_loss = F.l1_loss(recon, target, reduction="none").mean(dim=1)
+    else:
+        recon_loss = F.mse_loss(recon, target, reduction="none").mean(dim=1)
+
+    kld = _kl_divergence(mu, logvar)
+    loss = recon_loss + beta * kld
+    reduced = loss.mean() if reduction == "mean" else loss.sum()
+    return reduced, {
+        "recon_loss": recon_loss.mean(),
+        "kl_loss": kld.mean(),
+    }
+
+
 LOSS_REGISTRY: dict[str, LossFn] = {
     "vanilla": vanilla_vae_loss,
     "beta_vae": beta_vae_loss,
+    "scale_vae": scale_vae_loss,
 }
 
 __all__ = [
     "LossFn",
     "beta_vae_loss",
     "vanilla_vae_loss",
+    "scale_vae_loss",
     "LOSS_REGISTRY",
 ]

@@ -1,0 +1,8 @@
+model:
+  loss_name: scale_vae
+  loss_params:
+    des_std: 1.0
+    f_epo: 10
+    scale_eps: 1.0e-6
+    beta: 1.0
+    recon: mse
