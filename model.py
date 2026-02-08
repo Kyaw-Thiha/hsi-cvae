@@ -32,11 +32,20 @@ class SchedulerParams:
     T_max: int = 200
 
 
+@dataclass
+class WavelengthParams:
+    """Model-side wavelength metadata for spectral positional features."""
+    start_nm: int = 400
+    end_nm: int = 2490
+    step_nm: int = 10
+
+
 class CVAELightningModule(L.LightningModule):
     """LightningModule wrapping the Conditional VAE for training/eval."""
     scale_f_bar: torch.Tensor
     scale_f_accum: torch.Tensor
     scale_f_count: torch.Tensor
+    wavelengths_nm: torch.Tensor
 
     def __init__(
         self,
@@ -54,12 +63,13 @@ class CVAELightningModule(L.LightningModule):
         lr: float = 1e-3,
         weight_decay: float = 0.0,
         scheduler_cfg: Optional[SchedulerParams] = None,
+        wavelength_params: Optional[WavelengthParams] = None,
         temperature: float = 1.0,
         guidance_scale: float = 1.0,
         condition_scale: float = 1.0,
     ) -> None:
         super().__init__()
-        self.save_hyperparameters(ignore=["loss_params", "scheduler_cfg"])
+        self.save_hyperparameters(ignore=["loss_params", "scheduler_cfg", "wavelength_params"])
 
         # Model Architecture
         self.architecture = architecture.lower()
@@ -102,6 +112,16 @@ class CVAELightningModule(L.LightningModule):
         else:
             raise TypeError("scheduler_cfg must be a SchedulerParams dataclass or mapping.")
 
+        # Wavelength Config
+        if wavelength_params is None:
+            self.wavelength_params: dict[str, Any] = {}
+        elif isinstance(wavelength_params, WavelengthParams):
+            self.wavelength_params = asdict(wavelength_params)
+        elif isinstance(wavelength_params, Mapping):
+            self.wavelength_params = dict(wavelength_params)
+        else:
+            raise TypeError("wavelength_params must be a WavelengthParams dataclass or mapping.")
+
         # Model Hyperparams
         self.learning_rate = lr
         self.weight_decay = weight_decay
@@ -111,6 +131,7 @@ class CVAELightningModule(L.LightningModule):
         self.predict_temperature = float(temperature)
         self.predict_guidance_scale = float(guidance_scale)
         self.predict_condition_scale = float(condition_scale)
+        self.register_buffer("wavelengths_nm", self._build_wavelengths_nm(input_dim), persistent=False)
 
         # Scale-VAE state (persist f_bar for inference-time scaling)
         self.register_buffer("scale_f_bar", torch.ones(latent_dim, dtype=torch.float32))
@@ -120,6 +141,25 @@ class CVAELightningModule(L.LightningModule):
     def _is_scale_vae(self) -> bool:
         """Return whether the active loss selection is Scale-VAE."""
         return self.loss_name == "scale_vae"
+
+    def _build_wavelengths_nm(self, input_dim: int) -> torch.Tensor:
+        """Build fixed wavelength coordinates and validate against input_dim."""
+        start = int(self.wavelength_params.get("start_nm", 400))
+        end = int(self.wavelength_params.get("end_nm", 2490))
+        step = int(self.wavelength_params.get("step_nm", 10))
+        if step <= 0:
+            raise ValueError("wavelength_params.step_nm must be positive.")
+        if end < start:
+            raise ValueError("wavelength_params.end_nm must be >= wavelength_params.start_nm.")
+        span = end - start
+        if span % step != 0:
+            raise ValueError("wavelength_params must satisfy (end_nm - start_nm) % step_nm == 0.")
+        n_wavelengths = (span // step) + 1
+        if n_wavelengths != input_dim:
+            raise ValueError(
+                f"wavelength_params imply {n_wavelengths} bands but model.input_dim is {input_dim}."
+            )
+        return torch.arange(start, end + 1, step, dtype=torch.float32)
 
     def _build_model(
         self,

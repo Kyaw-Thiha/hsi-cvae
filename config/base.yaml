@@ -59,6 +59,10 @@ model:
   input_dim: 210
   condition_dim: 3
   latent_dim: 32
+  wavelength_params:
+    start_nm: 400
+    end_nm: 2490
+    step_nm: 10
   hidden_dims: [512, 256, 128]
   dropout: 0.1
   loss_name: beta_vae
