@@ -24,6 +24,11 @@ python main.py predict --config config/models/transformer.yaml --config config/p
 python main.py predict --config config/models/conformer.yaml --config config/predict/training.yaml --ckpt_path outputs/run/checkpoints/best/conformer.ckpt
 ```
 
+### 📈 Visualize Original Dataset
+```bash
+python -m callbacks.original_line_charts
+```
+
 ### 🔧 Training from a checkpoint
 ```bash
 python main.py fit --config config/models/mlp.yaml --ckpt_path runs/train_/checkpoints/interval/hsdt-epoch10.ckpt
