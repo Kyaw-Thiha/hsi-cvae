@@ -4,6 +4,7 @@ model:
   loss_params:
     beta: 2.0
     recon: mse
-    grad_weight: 0.30
+    grad_weight: 1.5
     grad_metric: mse
-    grad_diff_order: 1
+    grad_diff_orders: [1, 2]
+    grad_order_weights: [0.7, 3.0]

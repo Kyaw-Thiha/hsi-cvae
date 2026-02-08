@@ -31,6 +31,8 @@ class LossParams:
     grad_weight: float = 0.0
     grad_metric: str = "mse"
     grad_diff_order: int = 1
+    grad_diff_orders: Optional[list[int]] = None
+    grad_order_weights: Optional[list[float]] = None
 
 
 @dataclass

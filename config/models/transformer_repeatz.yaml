@@ -10,6 +10,6 @@ model:
 
     # Params for Local Refiner Block
     decoder_use_local_refiner: true
-    decoder_local_refiner_gate_init: 0.20
+    decoder_local_refiner_gate_init: 0.50
     decoder_local_refiner_gate_learnable: true
-    decoder_local_refiner_warmup_epochs: 1
+    decoder_local_refiner_warmup_epochs: 20

@@ -30,22 +30,55 @@ def _gradient_loss_per_sample(
     if grad_weight <= 0.0:
         return torch.zeros(recon.size(0), device=recon.device, dtype=recon.dtype)
 
-    diff_order = max(1, int(params.get("grad_diff_order", 1)))
-    grad_metric = str(params.get("grad_metric", "mse")).lower()
-
-    # If spectra are too short for requested finite-difference order, disable term.
-    if recon.size(1) <= diff_order:
-        return torch.zeros(recon.size(0), device=recon.device, dtype=recon.dtype)
-
-    recon_grad = torch.diff(recon, dim=1, n=diff_order)
-    target_grad = torch.diff(target, dim=1, n=diff_order)
-
-    if grad_metric == "l1":
-        grad_loss = F.l1_loss(recon_grad, target_grad, reduction="none").mean(dim=1)
+    diff_orders_raw = params.get("grad_diff_orders")
+    if diff_orders_raw is None:
+        diff_orders = [max(1, int(params.get("grad_diff_order", 1)))]
     else:
-        grad_loss = F.mse_loss(recon_grad, target_grad, reduction="none").mean(dim=1)
+        if not isinstance(diff_orders_raw, (list, tuple)):
+            raise TypeError("loss_params.grad_diff_orders must be a list/tuple of positive integers.")
+        diff_orders = []
+        for item in diff_orders_raw:
+            order = int(item)
+            if order < 1:
+                raise ValueError("loss_params.grad_diff_orders values must be >= 1.")
+            if order not in diff_orders:
+                diff_orders.append(order)
+        if not diff_orders:
+            return torch.zeros(recon.size(0), device=recon.device, dtype=recon.dtype)
 
-    return grad_loss
+    order_weights_raw = params.get("grad_order_weights")
+    if order_weights_raw is None:
+        order_weights = [1.0] * len(diff_orders)
+    else:
+        if not isinstance(order_weights_raw, (list, tuple)):
+            raise TypeError("loss_params.grad_order_weights must be a list/tuple of floats.")
+        if len(order_weights_raw) != len(diff_orders):
+            raise ValueError("loss_params.grad_order_weights length must match grad_diff_orders length.")
+        order_weights = [float(w) for w in order_weights_raw]
+
+    grad_metric = str(params.get("grad_metric", "mse")).lower()
+    combined_loss = torch.zeros(recon.size(0), device=recon.device, dtype=recon.dtype)
+    used_any_order = False
+    for diff_order, order_weight in zip(diff_orders, order_weights):
+        if order_weight <= 0.0:
+            continue
+        # If spectra are too short for requested finite-difference order, skip this term.
+        if recon.size(1) <= diff_order:
+            continue
+
+        recon_grad = torch.diff(recon, dim=1, n=diff_order)
+        target_grad = torch.diff(target, dim=1, n=diff_order)
+
+        if grad_metric == "l1":
+            grad_loss = F.l1_loss(recon_grad, target_grad, reduction="none").mean(dim=1)
+        else:
+            grad_loss = F.mse_loss(recon_grad, target_grad, reduction="none").mean(dim=1)
+        combined_loss = combined_loss + (float(order_weight) * grad_loss)
+        used_any_order = True
+
+    if not used_any_order:
+        return torch.zeros(recon.size(0), device=recon.device, dtype=recon.dtype)
+    return combined_loss
 
 
 def vanilla_vae_loss(
