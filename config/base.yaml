@@ -82,7 +82,7 @@ data:
     - npv_fraction
     - soil_fraction
   spectral_range: [400, 2490, 10]
-  batch_size: 256
+  batch_size: 32
   num_workers: 4
   splits: [0.8, 0.1, 0.1]
   seed: 42

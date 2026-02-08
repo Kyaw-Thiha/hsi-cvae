@@ -1,0 +1,9 @@
+model:
+  architecture: transformer_repeatz
+  latent_dim: 64
+  transformer_repeatz_params:
+    d_model: 256
+    n_heads: 8
+    encoder_layers: 6
+    decoder_layers: 4
+    dropout: 0.1

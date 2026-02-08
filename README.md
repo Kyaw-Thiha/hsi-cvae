@@ -11,6 +11,7 @@ python main.py fit --config config/models/mlp.yaml
 - MLP: `--config config/models/mlp.yaml`
 - CNN: `--config config/models/cnn.yaml`
 - Transformer: `--config config/models/transformer.yaml`
+- Transformer Repeat-Z: `--config config/models/transformer_repeatz.yaml`
 - Conformer: `--config config/models/conformer.yaml`
 
 ### 🔍 Predict / Sampling

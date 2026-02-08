@@ -12,6 +12,7 @@ from torch import optim
 from models.mlp.cvae import ConditionalVAE
 from models.cnn.cvae import ConvConditionalVAE
 from models.transformer.cvae import TransformerConditionalVAE
+from models.transformer_repeatz.cvae import TransformerRepeatZConditionalVAE
 from models.conformer.cvae import ConformerConditionalVAE
 from models.losses import LOSS_REGISTRY
 
@@ -57,6 +58,7 @@ class CVAELightningModule(L.LightningModule):
         architecture: str = "mlp",
         cnn_params: Optional[Mapping[str, Any]] = None,
         transformer_params: Optional[Mapping[str, Any]] = None,
+        transformer_repeatz_params: Optional[Mapping[str, Any]] = None,
         conformer_params: Optional[Mapping[str, Any]] = None,
         loss_name: str = "vanilla",
         loss_params: Optional[LossParams] = None,
@@ -71,12 +73,29 @@ class CVAELightningModule(L.LightningModule):
         super().__init__()
         self.save_hyperparameters(ignore=["loss_params", "scheduler_cfg", "wavelength_params"])
 
+        # Wavelength Config
+        if wavelength_params is None:
+            self.wavelength_params: dict[str, Any] = {}
+        elif isinstance(wavelength_params, WavelengthParams):
+            self.wavelength_params = asdict(wavelength_params)
+        elif isinstance(wavelength_params, Mapping):
+            self.wavelength_params = dict(wavelength_params)
+        else:
+            raise TypeError("wavelength_params must be a WavelengthParams dataclass or mapping.")
+
         # Model Architecture
         self.architecture = architecture.lower()
         self.cnn_params = dict(cnn_params or {})
         self.transformer_params = dict(transformer_params or {})
+        self.transformer_repeatz_params = dict(transformer_repeatz_params or {})
         self.conformer_params = dict(conformer_params or {})
-        self.model: Union[ConditionalVAE, ConvConditionalVAE, TransformerConditionalVAE, ConformerConditionalVAE] = (
+        self.model: Union[
+            ConditionalVAE,
+            ConvConditionalVAE,
+            TransformerConditionalVAE,
+            TransformerRepeatZConditionalVAE,
+            ConformerConditionalVAE,
+        ] = (
             self._build_model(
                 input_dim=input_dim,
                 condition_dim=condition_dim,
@@ -111,16 +130,6 @@ class CVAELightningModule(L.LightningModule):
             self.scheduler_cfg = dict(scheduler_cfg)
         else:
             raise TypeError("scheduler_cfg must be a SchedulerParams dataclass or mapping.")
-
-        # Wavelength Config
-        if wavelength_params is None:
-            self.wavelength_params: dict[str, Any] = {}
-        elif isinstance(wavelength_params, WavelengthParams):
-            self.wavelength_params = asdict(wavelength_params)
-        elif isinstance(wavelength_params, Mapping):
-            self.wavelength_params = dict(wavelength_params)
-        else:
-            raise TypeError("wavelength_params must be a WavelengthParams dataclass or mapping.")
 
         # Model Hyperparams
         self.learning_rate = lr
@@ -168,7 +177,13 @@ class CVAELightningModule(L.LightningModule):
         latent_dim: int,
         hidden_dims: list[int],
         dropout: float,
-    ) -> Union[ConditionalVAE, ConvConditionalVAE, TransformerConditionalVAE, ConformerConditionalVAE]:
+    ) -> Union[
+        ConditionalVAE,
+        ConvConditionalVAE,
+        TransformerConditionalVAE,
+        TransformerRepeatZConditionalVAE,
+        ConformerConditionalVAE,
+    ]:
         if self.architecture == "mlp":
             return ConditionalVAE(
                 input_dim=input_dim,
@@ -203,6 +218,24 @@ class CVAELightningModule(L.LightningModule):
                 latent_dim=latent_dim,
                 **transformer_defaults,
             )
+        if self.architecture == "transformer_repeatz":
+            repeatz_defaults: dict[str, Any] = {
+                "d_model": 256,
+                "n_heads": 8,
+                "encoder_layers": 6,
+                "decoder_layers": 4,
+                "dropout": dropout,
+                "wavelength_start_nm": int(self.wavelength_params.get("start_nm", 400)),
+                "wavelength_end_nm": int(self.wavelength_params.get("end_nm", 2490)),
+                "wavelength_step_nm": int(self.wavelength_params.get("step_nm", 10)),
+            }
+            repeatz_defaults.update(self.transformer_repeatz_params)
+            return TransformerRepeatZConditionalVAE(
+                input_dim=input_dim,
+                cond_dim=condition_dim,
+                latent_dim=latent_dim,
+                **repeatz_defaults,
+            )
         if self.architecture == "conformer":
             conformer_defaults: dict[str, Any] = {
                 "d_model": 256,
@@ -234,7 +267,7 @@ class CVAELightningModule(L.LightningModule):
             token_model = cast(Union[TransformerConditionalVAE, ConformerConditionalVAE], self.model)
             mu, logvar, memory = token_model.encode(spectrum, condition)
             return mu, logvar, memory
-        seq_model = cast(Union[ConditionalVAE, ConvConditionalVAE], self.model)
+        seq_model = cast(Union[ConditionalVAE, ConvConditionalVAE, TransformerRepeatZConditionalVAE], self.model)
         mu, logvar = seq_model.encode(spectrum, condition)
         return mu, logvar, None
 
@@ -245,8 +278,15 @@ class CVAELightningModule(L.LightningModule):
         if self.architecture in {"transformer", "conformer"}:
             token_model = cast(Union[TransformerConditionalVAE, ConformerConditionalVAE], self.model)
             return token_model.decode(z, condition, memory)
-        seq_model = cast(Union[ConditionalVAE, ConvConditionalVAE], self.model)
+        seq_model = cast(Union[ConditionalVAE, ConvConditionalVAE, TransformerRepeatZConditionalVAE], self.model)
         return seq_model.decode(z, condition)
+
+    @staticmethod
+    def _normalize_conditions(cond: torch.Tensor) -> torch.Tensor:
+        """Normalize condition vectors row-wise to sum to 1."""
+        if cond.ndim != 2 or cond.size(1) == 0:
+            return cond
+        return cond / cond.sum(dim=1, keepdim=True).clamp_min(1e-6)
 
     def _compute_scale_factor(self, mu: torch.Tensor) -> torch.Tensor:
         """Compute per-latent-dimension Scale-VAE factor from batch statistics."""
@@ -287,7 +327,8 @@ class CVAELightningModule(L.LightningModule):
 
     def _shared_step(self, batch: dict[str, torch.Tensor], stage: str) -> torch.Tensor:
         """Run one train/val/test step with either standard VAE or Scale-VAE flow."""
-        spectra, cond = batch["spectrum"], batch["condition"]
+        spectra = batch["spectrum"]
+        cond = self._normalize_conditions(batch["condition"])
 
         if self._is_scale_vae():
             mu, logvar, memory = self._encode_with_optional_memory(spectra, cond)
@@ -346,7 +387,7 @@ class CVAELightningModule(L.LightningModule):
         dataloader_idx: int = 0,
     ) -> dict[str, torch.Tensor]:
         """Generate conditioned spectra for prediction callbacks and exporters."""
-        conditions = batch["condition"].to(self.device)
+        conditions = self._normalize_conditions(batch["condition"].to(self.device))
         n = conditions.size(0)
 
         sample_ids = batch.get("sample_id")
@@ -443,6 +484,7 @@ class CVAELightningModule(L.LightningModule):
             cond = torch.rand(n_samples, self.condition_dim, device=target_device)
             if self.condition_dim > 0:
                 cond = cond / cond.sum(dim=1, keepdim=True).clamp_min(1e-6)
+        cond = self._normalize_conditions(cond)
         z = torch.randn(n_samples, self.latent_dim, device=target_device)
         if temperature != 1.0:
             z = z * temperature
