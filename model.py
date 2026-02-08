@@ -352,10 +352,19 @@ class CVAELightningModule(L.LightningModule):
 
     def on_train_epoch_start(self) -> None:
         """Reset epoch accumulators used to estimate the next Scale-VAE average factor."""
-        if not self._is_scale_vae():
-            return
-        cast(torch.Tensor, self.scale_f_accum).zero_()
-        cast(torch.Tensor, self.scale_f_count).zero_()
+        if self.architecture == "transformer_repeatz":
+            repeatz_model = cast(TransformerRepeatZConditionalVAE, self.model)
+            repeatz_model.set_local_refiner_warmup_epoch(self.current_epoch)
+            self.log(
+                "train_local_refiner_effective_gate",
+                repeatz_model.local_refiner_effective_gate(),
+                prog_bar=False,
+                logger=True,
+            )
+
+        if self._is_scale_vae():
+            cast(torch.Tensor, self.scale_f_accum).zero_()
+            cast(torch.Tensor, self.scale_f_count).zero_()
 
     def on_train_epoch_end(self) -> None:
         """Finalize epoch-average latent scaling factor for subsequent epochs."""

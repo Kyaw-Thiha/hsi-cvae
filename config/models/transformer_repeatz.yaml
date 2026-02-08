@@ -1,10 +1,18 @@
 model:
   architecture: transformer_repeatz
   latent_dim: 64
+  lr: 0.0003
+  loss_params:
+    beta: 2.0
   transformer_repeatz_params:
     d_model: 256
     n_heads: 8
     encoder_layers: 6
     decoder_layers: 4
     dropout: 0.1
+
+    # Params for Local Refiner Block
     decoder_use_local_refiner: true
+    decoder_local_refiner_gate_init: 0.0
+    decoder_local_refiner_gate_learnable: true
+    decoder_local_refiner_warmup_epochs: 10
