@@ -174,7 +174,7 @@ def cli_main():
 
     argv = sys.argv[1:]
     commands = {"fit", "validate", "test", "predict", "tune"}
-    default_loss_cfg = ["--config", "config/losses/beta_vae.yaml"]
+    default_loss_cfg = ["--config", "config/losses/scale_vae.yaml"]
     if argv and argv[0] in commands:
         command, remainder = argv[0], argv[1:]
         predict_cfg = ["--config", "config/predict.yaml"] if command == "predict" else []
