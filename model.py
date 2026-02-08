@@ -26,6 +26,8 @@ class LossParams:
     des_std: float = 1.0
     f_epo: int = 10
     scale_eps: float = 1e-6
+    scale_min: float = 0.5
+    scale_max: float = 4.0
 
     # Gradient loss params
     grad_weight: float = 0.0
@@ -294,8 +296,12 @@ class CVAELightningModule(L.LightningModule):
         """Compute per-latent-dimension Scale-VAE factor from batch statistics."""
         des_std = float(self.loss_params.get("des_std", 1.0))
         eps = float(self.loss_params.get("scale_eps", 1e-6))
+        scale_min = float(self.loss_params.get("scale_min", 0.5))
+        scale_max = float(self.loss_params.get("scale_max", 4.0))
+        if scale_max < scale_min:
+            scale_min, scale_max = scale_max, scale_min
         mu_std = mu.detach().std(dim=0, unbiased=False).clamp_min(eps)
-        factor = torch.full_like(mu_std, des_std) / mu_std
+        factor = (torch.full_like(mu_std, des_std) / mu_std).clamp(min=scale_min, max=scale_max)
         return factor.to(device=mu.device, dtype=mu.dtype)
 
     def _select_scale_factor(self, mu: torch.Tensor, stage: str) -> torch.Tensor:

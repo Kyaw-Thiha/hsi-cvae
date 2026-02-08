@@ -230,7 +230,15 @@ class RepeatZDecoder(nn.Module):
             # Local depthwise-separable convolutions over wavelength axis.
             self.local_refiner = nn.Sequential(
                 # Stage 1: broad local context per channel (~70nm window).
-                nn.Conv1d(d_model, d_model, kernel_size=7, padding=3, groups=d_model, bias=False),
+                nn.Conv1d(
+                    d_model,
+                    d_model,
+                    kernel_size=7,
+                    padding=3,
+                    padding_mode="reflect",
+                    groups=d_model,
+                    bias=False,
+                ),
                 nn.GELU(),
                 # Pointwise expansion/mixing across channels.
                 nn.Conv1d(d_model, 2 * d_model, kernel_size=1),
@@ -238,7 +246,15 @@ class RepeatZDecoder(nn.Module):
                 # Project back to model width.
                 nn.Conv1d(2 * d_model, d_model, kernel_size=1),
                 # Stage 2: finer local detail per channel (~30nm window).
-                nn.Conv1d(d_model, d_model, kernel_size=3, padding=1, groups=d_model, bias=False),
+                nn.Conv1d(
+                    d_model,
+                    d_model,
+                    kernel_size=3,
+                    padding=1,
+                    padding_mode="reflect",
+                    groups=d_model,
+                    bias=False,
+                ),
                 nn.GELU(),
                 # Final channel mixing before residual add.
                 nn.Conv1d(d_model, d_model, kernel_size=1),
