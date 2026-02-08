@@ -1,9 +1,9 @@
 model:
   loss_name: beta_vae
-  lr: 0.0003
+  lr: 0.0002
   loss_params:
-    beta: 4.0
+    beta: 2.0
     recon: mse
-    grad_weight: 0.05
+    grad_weight: 0.30
     grad_metric: mse
     grad_diff_order: 1
