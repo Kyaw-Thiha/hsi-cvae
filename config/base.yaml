@@ -58,7 +58,7 @@ trainer:
           - npv_fraction
           - soil_fraction
         spectrum_id_column: Spectra
-        normalize_original_rows: true
+        normalization: dataset
         max_original_samples: 2
         random_seed: 42
         run_every_n_epochs: 1

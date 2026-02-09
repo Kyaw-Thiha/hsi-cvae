@@ -29,7 +29,8 @@ class PureLineCharts(Callback):
         step_nm: int = 10,
         condition_columns: Optional[Sequence[str]] = ("gv_fraction", "npv_fraction", "soil_fraction"),
         spectrum_id_column: str = "Spectra",
-        normalize_original_rows: bool = True,
+        normalization: str = "dataset",
+        normalize_original_rows: Optional[bool] = None,
         max_original_samples: int = 2,
         random_seed: int = 42,
         run_every_n_epochs: int = 1,
@@ -42,7 +43,11 @@ class PureLineCharts(Callback):
         self.step_nm = int(step_nm)
         self.condition_columns = list(condition_columns) if condition_columns else []
         self.spectrum_id_column = spectrum_id_column
-        self.normalize_original_rows = bool(normalize_original_rows)
+        # Backward-compatible alias: old configs set normalize_original_rows.
+        # New behavior defaults to dataset-level normalization to match training targets.
+        if normalize_original_rows is not None:
+            normalization = "row" if bool(normalize_original_rows) else "none"
+        self.normalization = self._validate_normalization(normalization)
         self.max_original_samples = min(max(int(max_original_samples), 0), 2)
         self.random_seed = int(random_seed)
         self.run_every_n_epochs = max(int(run_every_n_epochs), 1)
@@ -98,8 +103,7 @@ class PureLineCharts(Callback):
 
         self._wavelengths = [int(col) for col in spectral_columns]
         values = df[spectral_columns].to_numpy(dtype=np.float32)
-        if self.normalize_original_rows:
-            values = self._normalize_rows(values)
+        values = self._apply_normalization(values)
 
         for material in ("gv", "npv", "soil"):
             idx = self._find_condition_index(material)
@@ -204,6 +208,27 @@ class PureLineCharts(Callback):
                 spectral_columns.append(col)
         spectral_columns.sort(key=int)
         return spectral_columns
+
+    @staticmethod
+    def _validate_normalization(value: str) -> str:
+        mode = str(value).lower()
+        if mode not in {"dataset", "row", "none"}:
+            raise ValueError("normalization must be one of: dataset, row, none.")
+        return mode
+
+    def _apply_normalization(self, values: np.ndarray) -> np.ndarray:
+        if self.normalization == "none":
+            return values
+        if self.normalization == "row":
+            return self._normalize_rows(values)
+        return self._normalize_dataset(values)
+
+    @staticmethod
+    def _normalize_dataset(values: np.ndarray) -> np.ndarray:
+        min_value = float(values.min())
+        max_value = float(values.max())
+        value_range = max(max_value - min_value, 1e-6)
+        return (values - min_value) / value_range
 
     @staticmethod
     def _normalize_rows(values: np.ndarray) -> np.ndarray:
