@@ -34,6 +34,14 @@ class LossParams:
     grad_diff_orders: Optional[list[int]] = None
     grad_order_weights: Optional[list[float]] = None
 
+    # KL annealing params (used for beta_vae during training)
+    kl_anneal: bool = False
+    kl_anneal_mode: str = "linear"
+    kl_anneal_start: float = 0.0
+    kl_anneal_warmup_epochs: Optional[int] = None
+    kl_anneal_warmup_ratio: float = 0.0
+    kl_active_threshold: float = 0.1
+
 
 @dataclass
 class SchedulerParams:
@@ -79,6 +87,7 @@ class CVAELightningModule(L.LightningModule):
         temperature: float = 1.0,
         guidance_scale: float = 1.0,
         condition_scale: float = 1.0,
+        condition_dropout: float = 0.0,
     ) -> None:
         super().__init__()
         self.save_hyperparameters(ignore=["loss_params", "scheduler_cfg", "wavelength_params"])
@@ -148,6 +157,7 @@ class CVAELightningModule(L.LightningModule):
         self.predict_temperature = float(temperature)
         self.predict_guidance_scale = float(guidance_scale)
         self.predict_condition_scale = float(condition_scale)
+        self.condition_dropout = min(max(float(condition_dropout), 0.0), 1.0)
         self.register_buffer("wavelengths_nm", self._build_wavelengths_nm(input_dim), persistent=False)
 
         # Scale-VAE state (persist f_bar for inference-time scaling)
@@ -328,25 +338,100 @@ class CVAELightningModule(L.LightningModule):
         scale_f_bar = cast(torch.Tensor, self.scale_f_bar)
         return z * scale_f_bar.to(device=z.device, dtype=z.dtype)
 
+    def _should_anneal_kl(self, stage: str) -> bool:
+        """Enable KL annealing only for beta-VAE during training."""
+        if stage != "train":
+            return False
+        if self.loss_name != "beta_vae":
+            return False
+        return bool(self.loss_params.get("kl_anneal", False))
+
+    def _resolve_kl_warmup_epochs(self) -> int:
+        """Resolve warmup length from explicit epochs or trainer-relative ratio."""
+        explicit = self.loss_params.get("kl_anneal_warmup_epochs")
+        if explicit is not None:
+            return max(int(explicit), 0)
+
+        ratio = max(float(self.loss_params.get("kl_anneal_warmup_ratio", 0.0)), 0.0)
+        trainer = getattr(self, "trainer", None)
+        max_epochs = int(getattr(trainer, "max_epochs", 0) or 0)
+        if max_epochs <= 0:
+            return 0
+        return max(int(round(max_epochs * ratio)), 0)
+
+    def _effective_beta(self) -> float:
+        """Compute scheduled beta value for current epoch."""
+        target_beta = float(self.loss_params.get("beta", 4.0))
+        start_beta = float(self.loss_params.get("kl_anneal_start", 0.0))
+        warmup_epochs = self._resolve_kl_warmup_epochs()
+        if warmup_epochs <= 0:
+            return target_beta
+
+        progress = min(max(float(self.current_epoch) / float(warmup_epochs), 0.0), 1.0)
+        mode = str(self.loss_params.get("kl_anneal_mode", "linear")).lower()
+        if mode == "linear":
+            factor = progress
+        elif mode == "cosine":
+            factor = 0.5 * (1.0 - math.cos(math.pi * progress))
+        else:
+            raise ValueError("loss_params.kl_anneal_mode must be one of: linear, cosine.")
+        return start_beta + (target_beta - start_beta) * factor
+
+    def _apply_condition_dropout(self, cond: torch.Tensor, stage: str) -> tuple[torch.Tensor, torch.Tensor]:
+        """Drop whole condition vectors with Bernoulli mask during training."""
+        if stage != "train" or self.condition_dropout <= 0.0 or cond.ndim != 2 or cond.size(0) == 0:
+            keep_mask = torch.ones(cond.size(0), 1, device=cond.device, dtype=cond.dtype)
+            return cond, keep_mask
+        keep_mask = (torch.rand(cond.size(0), 1, device=cond.device) > self.condition_dropout).to(dtype=cond.dtype)
+        return cond * keep_mask, keep_mask
+
+    def _log_kl_diagnostics(self, mu: torch.Tensor, logvar: torch.Tensor, stage: str) -> None:
+        """Log KL diagnostics to track posterior usage during training."""
+        if stage != "train":
+            return
+        with torch.no_grad():
+            kl_per_dim = -0.5 * (1.0 + logvar - mu.pow(2) - logvar.exp())
+            mean_kl_per_dim = kl_per_dim.mean(dim=0)
+            threshold = float(self.loss_params.get("kl_active_threshold", 0.1))
+            active_dims = (mean_kl_per_dim > threshold).sum().to(dtype=mu.dtype)
+            self.log("train_kl_per_dim_mean", kl_per_dim.mean(), prog_bar=False, logger=True)
+            self.log("train_active_dims", active_dims, prog_bar=False, logger=True)
+            self.log("train_mu_std", mu.std(unbiased=False), prog_bar=False, logger=True)
+
     def _shared_step(self, batch: dict[str, torch.Tensor], stage: str) -> torch.Tensor:
         """Run one train/val/test step with either standard VAE or Scale-VAE flow."""
         spectra = batch["spectrum"]
         cond = self._normalize_conditions(batch["condition"])
+        cond_used, cond_keep_mask = self._apply_condition_dropout(cond, stage)
 
         if self._is_scale_vae():
-            mu, logvar, memory = self._encode_with_optional_memory(spectra, cond)
+            mu, logvar, memory = self._encode_with_optional_memory(spectra, cond_used)
             scale_factor = self._select_scale_factor(mu, stage)
             std = torch.exp(0.5 * logvar)
             eps = torch.randn_like(std)
             z = mu * scale_factor.unsqueeze(0) + eps * std
-            recon = self._decode_with_optional_memory(z, cond, memory)
+            recon = self._decode_with_optional_memory(z, cond_used, memory)
             loss, metrics = self.loss_fn(spectra, recon, mu, logvar, self.loss_params)
             metrics = dict(metrics)
             metrics["scale_factor_mean"] = scale_factor.mean()
             metrics["scale_factor_std"] = scale_factor.std(unbiased=False)
         else:
-            recon, mu, logvar = self.model(spectra, cond)
-            loss, metrics = self.loss_fn(spectra, recon, mu, logvar, self.loss_params)
+            recon, mu, logvar = self.model(spectra, cond_used)
+            params_for_loss = self.loss_params
+            if self._should_anneal_kl(stage):
+                effective_beta = self._effective_beta()
+                params_for_loss = dict(self.loss_params)
+                params_for_loss["beta"] = effective_beta
+                self.log("train_beta_effective", effective_beta, prog_bar=False, logger=True)
+            elif stage == "train" and self.loss_name == "beta_vae":
+                self.log("train_beta_effective", float(self.loss_params.get("beta", 4.0)), prog_bar=False, logger=True)
+            loss, metrics = self.loss_fn(spectra, recon, mu, logvar, params_for_loss)
+
+        if stage == "train":
+            applied = 1.0 - cond_keep_mask.float().mean()
+            self.log("train_condition_dropout_cfg", self.condition_dropout, prog_bar=False, logger=True)
+            self.log("train_condition_dropout_applied", applied, prog_bar=False, logger=True)
+        self._log_kl_diagnostics(mu, logvar, stage)
 
         self.log(f"{stage}_loss", loss, prog_bar=True)
         for name, value in metrics.items():
