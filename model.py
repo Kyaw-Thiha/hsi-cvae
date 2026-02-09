@@ -13,6 +13,7 @@ from models.mlp.cvae import ConditionalVAE
 from models.cnn.cvae import ConvConditionalVAE
 from models.transformer.cvae import TransformerConditionalVAE
 from models.transformer_repeatz.cvae import TransformerRepeatZConditionalVAE
+from models.dual_path_transformer.cvae import DualPathTransformerConditionalVAE
 from models.conformer.cvae import ConformerConditionalVAE
 from models.losses import LOSS_REGISTRY
 
@@ -77,6 +78,7 @@ class CVAELightningModule(L.LightningModule):
         cnn_params: Optional[Mapping[str, Any]] = None,
         transformer_params: Optional[Mapping[str, Any]] = None,
         transformer_repeatz_params: Optional[Mapping[str, Any]] = None,
+        dual_path_transformer_params: Optional[Mapping[str, Any]] = None,
         conformer_params: Optional[Mapping[str, Any]] = None,
         loss_name: str = "vanilla",
         loss_params: Optional[LossParams] = None,
@@ -107,12 +109,14 @@ class CVAELightningModule(L.LightningModule):
         self.cnn_params = dict(cnn_params or {})
         self.transformer_params = dict(transformer_params or {})
         self.transformer_repeatz_params = dict(transformer_repeatz_params or {})
+        self.dual_path_transformer_params = dict(dual_path_transformer_params or {})
         self.conformer_params = dict(conformer_params or {})
         self.model: Union[
             ConditionalVAE,
             ConvConditionalVAE,
             TransformerConditionalVAE,
             TransformerRepeatZConditionalVAE,
+            DualPathTransformerConditionalVAE,
             ConformerConditionalVAE,
         ] = self._build_model(
             input_dim=input_dim,
@@ -198,6 +202,7 @@ class CVAELightningModule(L.LightningModule):
         ConvConditionalVAE,
         TransformerConditionalVAE,
         TransformerRepeatZConditionalVAE,
+        DualPathTransformerConditionalVAE,
         ConformerConditionalVAE,
     ]:
         if self.architecture == "mlp":
@@ -252,6 +257,24 @@ class CVAELightningModule(L.LightningModule):
                 latent_dim=latent_dim,
                 **repeatz_defaults,
             )
+        if self.architecture == "dual_path_transformer":
+            dual_path_defaults: dict[str, Any] = {
+                "d_model": 256,
+                "n_heads": 8,
+                "encoder_layers": 6,
+                "decoder_layers": 2,
+                "dropout": 0.0,
+                "latent_fuse_weight": 0.1,
+                "gated_film_init": 0.1,
+                "latent_fuse_weight_learnable": True,
+            }
+            dual_path_defaults.update(self.dual_path_transformer_params)
+            return DualPathTransformerConditionalVAE(
+                input_dim=input_dim,
+                cond_dim=condition_dim,
+                latent_dim=latent_dim,
+                **dual_path_defaults,
+            )
         if self.architecture == "conformer":
             conformer_defaults: dict[str, Any] = {
                 "d_model": 256,
@@ -283,7 +306,15 @@ class CVAELightningModule(L.LightningModule):
             token_model = cast(Union[TransformerConditionalVAE, ConformerConditionalVAE], self.model)
             mu, logvar, memory = token_model.encode(spectrum, condition)
             return mu, logvar, memory
-        seq_model = cast(Union[ConditionalVAE, ConvConditionalVAE, TransformerRepeatZConditionalVAE], self.model)
+        seq_model = cast(
+            Union[
+                ConditionalVAE,
+                ConvConditionalVAE,
+                TransformerRepeatZConditionalVAE,
+                DualPathTransformerConditionalVAE,
+            ],
+            self.model,
+        )
         mu, logvar = seq_model.encode(spectrum, condition)
         return mu, logvar, None
 
@@ -292,7 +323,15 @@ class CVAELightningModule(L.LightningModule):
         if self.architecture in {"transformer", "conformer"}:
             token_model = cast(Union[TransformerConditionalVAE, ConformerConditionalVAE], self.model)
             return token_model.decode(z, condition, memory)
-        seq_model = cast(Union[ConditionalVAE, ConvConditionalVAE, TransformerRepeatZConditionalVAE], self.model)
+        seq_model = cast(
+            Union[
+                ConditionalVAE,
+                ConvConditionalVAE,
+                TransformerRepeatZConditionalVAE,
+                DualPathTransformerConditionalVAE,
+            ],
+            self.model,
+        )
         return seq_model.decode(z, condition)
 
     @staticmethod

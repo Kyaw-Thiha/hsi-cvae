@@ -185,7 +185,7 @@ def cli_main():
             "config/base.yaml",
             *default_loss_cfg,
             "--config",
-            "config/models/mlp.yaml",
+            "config/models/dual_path_transformer.yaml",
             *argv,
         ]
 

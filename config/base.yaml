@@ -71,7 +71,7 @@ trainer:
         out_dir: outputs/checkpoints
 
 model:
-  architecture: mlp
+  architecture: dual_path_transformer
   input_dim: 210
   condition_dim: 3
   latent_dim: 32
