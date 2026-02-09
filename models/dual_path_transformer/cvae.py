@@ -157,6 +157,7 @@ class DualPathDecoder(nn.Module):
         global_path_dropout: float,
         global_path_warmup_hold_epochs: int,
         global_path_warmup_ramp_epochs: int,
+        decoder_logit_gain: float,
     ) -> None:
         super().__init__()
         self.seq_len = seq_len
@@ -174,6 +175,10 @@ class DualPathDecoder(nn.Module):
         self.global_path_warmup_hold_epochs = max(int(global_path_warmup_hold_epochs), 0)
         self.global_path_warmup_ramp_epochs = max(int(global_path_warmup_ramp_epochs), 0)
         self._warmup_epoch = 0
+        gain = float(decoder_logit_gain)
+        if gain <= 0.0:
+            raise ValueError("decoder_logit_gain must be > 0.0.")
+        self.decoder_logit_gain = gain
 
         self.global_path = nn.Sequential(
             nn.Linear(d_model, d_model),
@@ -250,6 +255,7 @@ class DualPathDecoder(nn.Module):
             dtype=local_spectrum.dtype,
         )
         fused = global_scale * (1.0 - weight) * global_spectrum + weight * local_spectrum
+        fused = self.decoder_logit_gain * fused
         return torch.sigmoid(fused)
 
 
@@ -271,6 +277,7 @@ class DualPathTransformerConditionalVAE(nn.Module):
         global_path_dropout: float = 0.2,
         global_path_warmup_hold_epochs: int = 5,
         global_path_warmup_ramp_epochs: int = 10,
+        decoder_logit_gain: float = 1.0,
     ) -> None:
         super().__init__()
         self.d_model = d_model
@@ -306,6 +313,7 @@ class DualPathTransformerConditionalVAE(nn.Module):
             global_path_dropout=global_path_dropout,
             global_path_warmup_hold_epochs=global_path_warmup_hold_epochs,
             global_path_warmup_ramp_epochs=global_path_warmup_ramp_epochs,
+            decoder_logit_gain=decoder_logit_gain,
         )
 
     def set_global_path_warmup_epoch(self, epoch: int) -> None:

@@ -17,6 +17,27 @@ def _kl_divergence(mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
     return -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1)
 
 
+def _kl_divergence_with_free_bits(
+    mu: torch.Tensor,
+    logvar: torch.Tensor,
+    free_bits_total: float = 0.0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return raw KL and free-bits-adjusted KL objective per sample."""
+    kl_per_dim = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp())
+    kl_raw = torch.sum(kl_per_dim, dim=1)
+
+    free_bits_total = float(free_bits_total)
+    if free_bits_total < 0.0:
+        raise ValueError("loss_params.free_bits_total must be >= 0.0.")
+    if free_bits_total == 0.0:
+        return kl_raw, kl_raw
+
+    latent_dims = max(int(kl_per_dim.size(1)), 1)
+    free_bits_per_dim = free_bits_total / float(latent_dims)
+    kl_objective = torch.clamp(kl_per_dim - free_bits_per_dim, min=0.0).sum(dim=1)
+    return kl_raw, kl_objective
+
+
 def _gradient_loss_per_sample(
     recon: torch.Tensor,
     target: torch.Tensor,
@@ -113,9 +134,10 @@ def beta_vae_loss(
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     """Beta-VAE objective with configurable reconstruction metric."""
     params = params or {}
-    beta = params.get("beta", 4.0)
+    beta = float(params.get("beta", 4.0))
     recon_metric = params.get("recon", "mse")
     grad_weight = float(params.get("grad_weight", 0.0))
+    free_bits_total = float(params.get("free_bits_total", 0.0))
 
     if recon_metric == "l1":
         recon_loss = F.l1_loss(recon, target, reduction="none").mean(dim=1)
@@ -123,12 +145,13 @@ def beta_vae_loss(
         recon_loss = F.mse_loss(recon, target, reduction="none").mean(dim=1)
 
     grad_loss = _gradient_loss_per_sample(recon, target, params)
-    kld = _kl_divergence(mu, logvar)
-    loss = recon_loss + grad_weight * grad_loss + beta * kld
+    kld_raw, kld_objective = _kl_divergence_with_free_bits(mu, logvar, free_bits_total=free_bits_total)
+    loss = recon_loss + grad_weight * grad_loss + beta * kld_objective
     return loss.mean(), {
         "recon_loss": recon_loss.mean(),
         "grad_loss": grad_loss.mean(),
-        "kl_loss": kld.mean(),
+        "kl_loss": kld_raw.mean(),
+        "kl_objective_loss": kld_objective.mean(),
     }
 
 

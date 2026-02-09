@@ -42,6 +42,7 @@ class LossParams:
     kl_anneal_warmup_epochs: Optional[int] = None
     kl_anneal_warmup_ratio: float = 0.0
     kl_active_threshold: float = 0.1
+    free_bits_total: float = 0.0
 
 
 @dataclass
@@ -271,6 +272,7 @@ class CVAELightningModule(L.LightningModule):
                 "global_path_dropout": 0.2,
                 "global_path_warmup_hold_epochs": 5,
                 "global_path_warmup_ramp_epochs": 10,
+                "decoder_logit_gain": 1.0,
             }
             dual_path_defaults.update(self.dual_path_transformer_params)
             return DualPathTransformerConditionalVAE(
