@@ -151,22 +151,35 @@ class DualPathDecoder(nn.Module):
         n_layers: int,
         dropout: float,
         latent_fuse_weight: float,
+        latent_fuse_weight_min: float,
         film_gate_init: float,
         latent_fuse_weight_learnable: bool,
+        global_path_dropout: float,
+        global_path_warmup_hold_epochs: int,
+        global_path_warmup_ramp_epochs: int,
     ) -> None:
         super().__init__()
         self.seq_len = seq_len
-        init_weight = torch.tensor(float(latent_fuse_weight), dtype=torch.float32).clamp(1e-6, 1.0 - 1e-6)
+        min_weight = float(latent_fuse_weight_min)
+        if not 0.0 <= min_weight < 1.0:
+            raise ValueError("latent_fuse_weight_min must be in [0.0, 1.0).")
+        self.latent_fuse_weight_min = min_weight
+        raw_weight = (float(latent_fuse_weight) - min_weight) / max(1.0 - min_weight, 1e-6)
+        init_weight = torch.tensor(raw_weight, dtype=torch.float32).clamp(1e-6, 1.0 - 1e-6)
         init_logit = torch.log(init_weight / (1.0 - init_weight))
         if latent_fuse_weight_learnable:
             self.latent_fuse_weight = nn.Parameter(init_logit.clone())
         else:
             self.register_buffer("latent_fuse_weight", init_logit.clone())
+        self.global_path_warmup_hold_epochs = max(int(global_path_warmup_hold_epochs), 0)
+        self.global_path_warmup_ramp_epochs = max(int(global_path_warmup_ramp_epochs), 0)
+        self._warmup_epoch = 0
 
         self.global_path = nn.Sequential(
-            nn.Linear(d_model, 2 * d_model),
+            nn.Linear(d_model, d_model),
             nn.GELU(),
-            nn.Linear(2 * d_model, seq_len),
+            nn.Dropout(global_path_dropout),
+            nn.Linear(d_model, seq_len),
         )
 
         self.latent_projection = nn.Linear(latent_dim, d_model)
@@ -196,6 +209,29 @@ class DualPathDecoder(nn.Module):
         pe[:, 1::2] = torch.cos(position * div_term[: pe[:, 1::2].shape[1]])
         return pe
 
+    def set_warmup_epoch(self, epoch: int) -> None:
+        self._warmup_epoch = max(int(epoch), 0)
+
+    def _global_path_scale(self, apply_schedule: bool) -> float:
+        if not apply_schedule:
+            return 1.0
+        hold = self.global_path_warmup_hold_epochs
+        ramp = self.global_path_warmup_ramp_epochs
+        epoch = self._warmup_epoch
+        if epoch < hold:
+            return 0.0
+        if ramp <= 0:
+            return 1.0
+        progress = (epoch - hold + 1) / float(ramp)
+        return float(min(max(progress, 0.0), 1.0))
+
+    def effective_local_weight(self) -> float:
+        raw_weight = float(torch.sigmoid(self.latent_fuse_weight.detach()).item())
+        return self.latent_fuse_weight_min + (1.0 - self.latent_fuse_weight_min) * raw_weight
+
+    def effective_global_scale(self) -> float:
+        return self._global_path_scale(apply_schedule=True)
+
     def forward(self, z: torch.Tensor, cond_embed: torch.Tensor) -> torch.Tensor:
         global_spectrum = self.global_path(cond_embed)
 
@@ -206,9 +242,15 @@ class DualPathDecoder(nn.Module):
             local_tokens = layer(local_tokens, cond_embed)
         local_spectrum = self.local_out(local_tokens).squeeze(-1)
 
-        weight = torch.sigmoid(self.latent_fuse_weight).to(device=local_spectrum.device, dtype=local_spectrum.dtype)
-        fused = global_spectrum + weight * local_spectrum
-        return 0.5 * (torch.tanh(fused) + 1.0)
+        raw_weight = torch.sigmoid(self.latent_fuse_weight).to(device=local_spectrum.device, dtype=local_spectrum.dtype)
+        weight = self.latent_fuse_weight_min + (1.0 - self.latent_fuse_weight_min) * raw_weight
+        global_scale = torch.tensor(
+            self._global_path_scale(apply_schedule=self.training),
+            device=local_spectrum.device,
+            dtype=local_spectrum.dtype,
+        )
+        fused = global_scale * (1.0 - weight) * global_spectrum + weight * local_spectrum
+        return torch.sigmoid(fused)
 
 
 class DualPathTransformerConditionalVAE(nn.Module):
@@ -222,9 +264,13 @@ class DualPathTransformerConditionalVAE(nn.Module):
         encoder_layers: int = 6,
         decoder_layers: int = 2,
         dropout: float = 0.0,
-        latent_fuse_weight: float = 0.1,
+        latent_fuse_weight: float = 0.7,
+        latent_fuse_weight_min: float = 0.3,
         gated_film_init: float = 0.1,
         latent_fuse_weight_learnable: bool = True,
+        global_path_dropout: float = 0.2,
+        global_path_warmup_hold_epochs: int = 5,
+        global_path_warmup_ramp_epochs: int = 10,
     ) -> None:
         super().__init__()
         self.d_model = d_model
@@ -254,9 +300,22 @@ class DualPathTransformerConditionalVAE(nn.Module):
             n_layers=decoder_layers,
             dropout=dropout,
             latent_fuse_weight=latent_fuse_weight,
+            latent_fuse_weight_min=latent_fuse_weight_min,
             film_gate_init=gated_film_init,
             latent_fuse_weight_learnable=latent_fuse_weight_learnable,
+            global_path_dropout=global_path_dropout,
+            global_path_warmup_hold_epochs=global_path_warmup_hold_epochs,
+            global_path_warmup_ramp_epochs=global_path_warmup_ramp_epochs,
         )
+
+    def set_global_path_warmup_epoch(self, epoch: int) -> None:
+        self.decoder.set_warmup_epoch(epoch)
+
+    def local_fuse_effective_weight(self) -> float:
+        return self.decoder.effective_local_weight()
+
+    def global_path_effective_scale(self) -> float:
+        return self.decoder.effective_global_scale()
 
     def _encode_condition(self, cond: torch.Tensor) -> torch.Tensor:
         if self.condition_embedding is None:

@@ -264,9 +264,13 @@ class CVAELightningModule(L.LightningModule):
                 "encoder_layers": 6,
                 "decoder_layers": 2,
                 "dropout": 0.0,
-                "latent_fuse_weight": 0.1,
+                "latent_fuse_weight": 0.7,
+                "latent_fuse_weight_min": 0.3,
                 "gated_film_init": 0.1,
                 "latent_fuse_weight_learnable": True,
+                "global_path_dropout": 0.2,
+                "global_path_warmup_hold_epochs": 5,
+                "global_path_warmup_ramp_epochs": 10,
             }
             dual_path_defaults.update(self.dual_path_transformer_params)
             return DualPathTransformerConditionalVAE(
@@ -485,6 +489,21 @@ class CVAELightningModule(L.LightningModule):
             self.log(
                 "train_local_refiner_effective_gate",
                 repeatz_model.local_refiner_effective_gate(),
+                prog_bar=False,
+                logger=True,
+            )
+        elif self.architecture == "dual_path_transformer":
+            dual_model = cast(DualPathTransformerConditionalVAE, self.model)
+            dual_model.set_global_path_warmup_epoch(self.current_epoch)
+            self.log(
+                "train_dual_path_local_weight",
+                dual_model.local_fuse_effective_weight(),
+                prog_bar=False,
+                logger=True,
+            )
+            self.log(
+                "train_dual_path_global_scale",
+                dual_model.global_path_effective_scale(),
                 prog_bar=False,
                 logger=True,
             )

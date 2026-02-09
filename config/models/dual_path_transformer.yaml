@@ -8,6 +8,10 @@ model:
     encoder_layers: 6
     decoder_layers: 2
     dropout: 0.0
-    latent_fuse_weight: 0.1
+    latent_fuse_weight: 0.7
+    latent_fuse_weight_min: 0.3
     latent_fuse_weight_learnable: true
-    gated_film_init: 0.1
+    global_path_dropout: 0.2
+    global_path_warmup_hold_epochs: 5
+    global_path_warmup_ramp_epochs: 10
+    gated_film_init: 0.3

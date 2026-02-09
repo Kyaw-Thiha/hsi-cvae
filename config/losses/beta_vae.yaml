@@ -2,7 +2,7 @@ model:
   loss_name: beta_vae
   lr: 0.0002
   loss_params:
-    beta: 0.6
+    beta: 0.1
     recon: mse
 
     # KL annealing
@@ -12,7 +12,7 @@ model:
     kl_anneal_warmup_ratio: 0.3
 
     # Gradient-based loss params
-    grad_weight: 1.5
+    grad_weight: 15.0
     grad_metric: mse
-    grad_diff_orders: [1]
-    grad_order_weights: [1.0]
+    grad_diff_orders: [1, 2]
+    grad_order_weights: [1.0, 10.0]

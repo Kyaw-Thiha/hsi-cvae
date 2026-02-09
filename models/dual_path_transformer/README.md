@@ -5,7 +5,8 @@ This variant splits decoding into two paths:
 - Local path from latent code (repeat-z tokens + transformer blocks)
 
 Final reconstruction:
-`output = global + 0.1 * local`, followed by `tanh` scaled to `[0, 1]`.
+`output = sigmoid(global_scale * (1 - w) * global + w * local)`,
+where `w` is a learnable local-path mix weight with a configurable minimum floor.
 
 ## Encoder
 - Linear projection to `d_model`
@@ -17,7 +18,7 @@ Final reconstruction:
 - Linear heads to `mu` and `logvar`
 
 ## Decoder
-- Global condition path: FFN (GELU, 4x) -> linear to full spectrum
+- Global condition path: FFN (GELU) + dropout -> linear to full spectrum
 - Local latent path:
   - latent projection to `d_model`
   - repeat across sequence
@@ -27,7 +28,8 @@ Final reconstruction:
     - Gated FiLM condition injection (sigmoid gate, init 0.1)
     - RMSNorm -> FFN (GELU, 4x) -> Residual
   - Linear projection to spectrum
-- Fuse global/local with a learnable sigmoid-constrained weight (init 0.1)
+- Fuse global/local with a learnable sigmoid-constrained local mix weight
+- Warm up decoder by holding global-path scale at 0, then linearly ramping to 1
 
 ## Config
 Enable with:
