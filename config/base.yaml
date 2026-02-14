@@ -62,6 +62,24 @@ trainer:
         max_original_samples: 2
         random_seed: 42
         run_every_n_epochs: 1
+    - class_path: callbacks.latent_diversity_line_charts.LatentDiversityLineCharts
+      init_args:
+        csv_path: data/simpler_data_rwc.csv
+        out_dir: outputs/line_charts/latent_diversity
+        start_nm: 400
+        end_nm: 2490
+        step_nm: 10
+        condition_columns:
+          - gv_fraction
+          - npv_fraction
+          - soil_fraction
+        spectrum_id_column: Spectra
+        normalization: dataset
+        max_original_samples: 2
+        random_seed: 42
+        run_every_n_epochs: 1
+        samples_per_condition: 16
+        sample_temperature: 1.0
     - class_path: callbacks.predict_images.SavePredictionsCallback
       init_args:
         out_dir: outputs/predict
