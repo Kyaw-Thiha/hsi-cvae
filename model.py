@@ -44,6 +44,12 @@ class LossParams:
     kl_active_threshold: float = 0.1
     free_bits_total: float = 0.0
 
+    # Wavelength masking params for reconstruction/gradient losses
+    masked_wavelength_ranges_nm: Optional[list[list[float]]] = None
+    masked_wavelength_weight: float = 0.0
+    wavelength_start_nm: float = 400.0
+    wavelength_step_nm: float = 10.0
+
 
 @dataclass
 class SchedulerParams:
@@ -270,6 +276,7 @@ class CVAELightningModule(L.LightningModule):
                 "gated_film_init": 0.1,
                 "latent_fuse_weight_learnable": True,
                 "global_path_dropout": 0.2,
+                "global_path_hidden_dim": 256,
                 "global_path_warmup_hold_epochs": 5,
                 "global_path_warmup_ramp_epochs": 10,
                 "decoder_logit_gain": 1.0,
@@ -485,16 +492,7 @@ class CVAELightningModule(L.LightningModule):
 
     def on_train_epoch_start(self) -> None:
         """Reset epoch accumulators used to estimate the next Scale-VAE average factor."""
-        if self.architecture == "transformer_repeatz":
-            repeatz_model = cast(TransformerRepeatZConditionalVAE, self.model)
-            repeatz_model.set_local_refiner_warmup_epoch(self.current_epoch)
-            self.log(
-                "train_local_refiner_effective_gate",
-                repeatz_model.local_refiner_effective_gate(),
-                prog_bar=False,
-                logger=True,
-            )
-        elif self.architecture == "dual_path_transformer":
+        if self.architecture == "dual_path_transformer":
             dual_model = cast(DualPathTransformerConditionalVAE, self.model)
             dual_model.set_global_path_warmup_epoch(self.current_epoch)
             self.log(

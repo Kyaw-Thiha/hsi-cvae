@@ -6,4 +6,8 @@ model:
     f_epo: 10
     scale_eps: 1.0e-6
     recon: mse
-
+    masked_wavelength_ranges_nm:
+      - [1700, 1900]
+    masked_wavelength_weight: 0.1
+    wavelength_start_nm: 400
+    wavelength_step_nm: 10

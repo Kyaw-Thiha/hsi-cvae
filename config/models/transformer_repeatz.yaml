@@ -8,9 +8,3 @@ model:
     encoder_layers: 6
     decoder_layers: 2
     dropout: 0.0
-
-    # Params for Local Refiner Block
-    decoder_use_local_refiner: true
-    decoder_local_refiner_gate_init: 0.50
-    decoder_local_refiner_gate_learnable: true
-    decoder_local_refiner_warmup_epochs: 20

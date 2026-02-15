@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from typing import Any
 
@@ -10,6 +11,75 @@ LossFn = Callable[
     [torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]],
     tuple[torch.Tensor, dict[str, torch.Tensor]],
 ]
+
+
+def _build_wavelength_weight_mask(
+    seq_len: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    params: dict[str, Any],
+) -> torch.Tensor:
+    """
+    Build per-band weights in [0, 1].
+
+    Supported params:
+      - masked_wavelength_ranges_nm: list[[start_nm, end_nm], ...]
+      - masked_wavelength_weight: float, default 0.0
+      - wavelength_start_nm: float, default 400.0
+      - wavelength_step_nm: float, default 10.0
+    """
+    mask = torch.ones(seq_len, device=device, dtype=dtype)
+    ranges = params.get("masked_wavelength_ranges_nm")
+    if not ranges:
+        return mask
+
+    if not isinstance(ranges, (list, tuple)):
+        raise TypeError("loss_params.masked_wavelength_ranges_nm must be a list of [start_nm, end_nm].")
+
+    start_nm = float(params.get("wavelength_start_nm", 400.0))
+    step_nm = float(params.get("wavelength_step_nm", 10.0))
+    if step_nm <= 0.0:
+        raise ValueError("loss_params.wavelength_step_nm must be > 0.")
+
+    fill = float(params.get("masked_wavelength_weight", 0.0))
+    fill = min(max(fill, 0.0), 1.0)
+
+    for pair in ranges:
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            raise ValueError("Each masked wavelength range must be [start_nm, end_nm].")
+        low_nm = float(pair[0])
+        high_nm = float(pair[1])
+        if high_nm < low_nm:
+            low_nm, high_nm = high_nm, low_nm
+
+        # Inclusive wavelength span [low_nm, high_nm].
+        start_idx = max(0, int(math.ceil((low_nm - start_nm) / step_nm)))
+        end_idx = min(seq_len - 1, int(math.floor((high_nm - start_nm) / step_nm)))
+        if start_idx <= end_idx:
+            mask[start_idx : end_idx + 1] = fill
+
+    return mask
+
+
+def _weighted_mean_per_sample(values: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
+    """values: (B, L), weights: (L,) -> (B,)"""
+    denom = weights.sum().clamp_min(1e-6)
+    return (values * weights.unsqueeze(0)).sum(dim=1) / denom
+
+
+def _build_gradient_position_mask(wavelength_mask: torch.Tensor, diff_order: int) -> torch.Tensor:
+    """
+    Convert an L-length wavelength mask into a mask for finite-diff outputs of length L-diff_order.
+    A gradient position is weighted by the minimum weight across its diff stencil points.
+    """
+    out_len = wavelength_mask.size(0) - diff_order
+    if out_len <= 0:
+        return torch.zeros(0, device=wavelength_mask.device, dtype=wavelength_mask.dtype)
+    stencil = torch.stack(
+        [wavelength_mask[offset : offset + out_len] for offset in range(diff_order + 1)],
+        dim=0,
+    )
+    return stencil.amin(dim=0)
 
 
 def _kl_divergence(mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
@@ -42,6 +112,7 @@ def _gradient_loss_per_sample(
     recon: torch.Tensor,
     target: torch.Tensor,
     params: dict[str, Any],
+    wavelength_mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """
     Optional gradient-matching loss on spectral slope.
@@ -91,9 +162,21 @@ def _gradient_loss_per_sample(
         target_grad = torch.diff(target, dim=1, n=diff_order)
 
         if grad_metric == "l1":
-            grad_loss = F.l1_loss(recon_grad, target_grad, reduction="none").mean(dim=1)
+            grad_loss_per_pos = F.l1_loss(recon_grad, target_grad, reduction="none")
         else:
-            grad_loss = F.mse_loss(recon_grad, target_grad, reduction="none").mean(dim=1)
+            grad_loss_per_pos = F.mse_loss(recon_grad, target_grad, reduction="none")
+
+        if wavelength_mask is None:
+            grad_loss = grad_loss_per_pos.mean(dim=1)
+        else:
+            grad_mask = _build_gradient_position_mask(wavelength_mask, diff_order).to(
+                device=grad_loss_per_pos.device,
+                dtype=grad_loss_per_pos.dtype,
+            )
+            if grad_mask.numel() == 0 or float(grad_mask.sum().item()) <= 0.0:
+                continue
+            grad_loss = _weighted_mean_per_sample(grad_loss_per_pos, grad_mask)
+
         combined_loss = combined_loss + (float(order_weight) * grad_loss)
         used_any_order = True
 
@@ -114,8 +197,16 @@ def vanilla_vae_loss(
     reduction = params.get("reduction", "mean")
     grad_weight = float(params.get("grad_weight", 0.0))
 
-    recon_loss = F.mse_loss(recon, target, reduction="none").mean(dim=1)
-    grad_loss = _gradient_loss_per_sample(recon, target, params)
+    wavelength_mask = _build_wavelength_weight_mask(
+        seq_len=recon.size(1),
+        device=recon.device,
+        dtype=recon.dtype,
+        params=params,
+    )
+
+    recon_loss_per_wavelength = F.mse_loss(recon, target, reduction="none")
+    recon_loss = _weighted_mean_per_sample(recon_loss_per_wavelength, wavelength_mask)
+    grad_loss = _gradient_loss_per_sample(recon, target, params, wavelength_mask=wavelength_mask)
     kld = _kl_divergence(mu, logvar)
     loss = recon_loss + grad_weight * grad_loss + kld
     return (loss.mean() if reduction == "mean" else loss.sum()), {
@@ -139,12 +230,20 @@ def beta_vae_loss(
     grad_weight = float(params.get("grad_weight", 0.0))
     free_bits_total = float(params.get("free_bits_total", 0.0))
 
-    if recon_metric == "l1":
-        recon_loss = F.l1_loss(recon, target, reduction="none").mean(dim=1)
-    else:
-        recon_loss = F.mse_loss(recon, target, reduction="none").mean(dim=1)
+    wavelength_mask = _build_wavelength_weight_mask(
+        seq_len=recon.size(1),
+        device=recon.device,
+        dtype=recon.dtype,
+        params=params,
+    )
 
-    grad_loss = _gradient_loss_per_sample(recon, target, params)
+    if recon_metric == "l1":
+        recon_loss_per_wavelength = F.l1_loss(recon, target, reduction="none")
+    else:
+        recon_loss_per_wavelength = F.mse_loss(recon, target, reduction="none")
+    recon_loss = _weighted_mean_per_sample(recon_loss_per_wavelength, wavelength_mask)
+
+    grad_loss = _gradient_loss_per_sample(recon, target, params, wavelength_mask=wavelength_mask)
     kld_raw, kld_objective = _kl_divergence_with_free_bits(mu, logvar, free_bits_total=free_bits_total)
     loss = recon_loss + grad_weight * grad_loss + beta * kld_objective
     return loss.mean(), {
@@ -167,10 +266,18 @@ def scale_vae_loss(
     recon_metric = params.get("recon", "mse")
     reduction = params.get("reduction", "mean")
 
+    wavelength_mask = _build_wavelength_weight_mask(
+        seq_len=recon.size(1),
+        device=recon.device,
+        dtype=recon.dtype,
+        params=params,
+    )
+
     if recon_metric == "l1":
-        recon_loss = F.l1_loss(recon, target, reduction="none").mean(dim=1)
+        recon_loss_per_wavelength = F.l1_loss(recon, target, reduction="none")
     else:
-        recon_loss = F.mse_loss(recon, target, reduction="none").mean(dim=1)
+        recon_loss_per_wavelength = F.mse_loss(recon, target, reduction="none")
+    recon_loss = _weighted_mean_per_sample(recon_loss_per_wavelength, wavelength_mask)
 
     kld = _kl_divergence(mu, logvar)
     loss = recon_loss + kld

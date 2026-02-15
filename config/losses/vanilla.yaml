@@ -4,3 +4,8 @@ model:
     grad_weight: 0.0
     grad_metric: mse
     grad_diff_order: 1
+    masked_wavelength_ranges_nm:
+      - [1700, 1900]
+    masked_wavelength_weight: 0.1
+    wavelength_start_nm: 400
+    wavelength_step_nm: 10

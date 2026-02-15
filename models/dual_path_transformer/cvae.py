@@ -155,6 +155,7 @@ class DualPathDecoder(nn.Module):
         film_gate_init: float,
         latent_fuse_weight_learnable: bool,
         global_path_dropout: float,
+        global_path_hidden_dim: int,
         global_path_warmup_hold_epochs: int,
         global_path_warmup_ramp_epochs: int,
         decoder_logit_gain: float,
@@ -165,6 +166,7 @@ class DualPathDecoder(nn.Module):
         if not 0.0 <= min_weight < 1.0:
             raise ValueError("latent_fuse_weight_min must be in [0.0, 1.0).")
         self.latent_fuse_weight_min = min_weight
+
         raw_weight = (float(latent_fuse_weight) - min_weight) / max(1.0 - min_weight, 1e-6)
         init_weight = torch.tensor(raw_weight, dtype=torch.float32).clamp(1e-6, 1.0 - 1e-6)
         init_logit = torch.log(init_weight / (1.0 - init_weight))
@@ -179,12 +181,13 @@ class DualPathDecoder(nn.Module):
         if gain <= 0.0:
             raise ValueError("decoder_logit_gain must be > 0.0.")
         self.decoder_logit_gain = gain
+        hidden_dim = max(int(global_path_hidden_dim), 1)
 
         self.global_path = nn.Sequential(
-            nn.Linear(d_model, d_model),
+            nn.Linear(d_model, hidden_dim),
             nn.GELU(),
             nn.Dropout(global_path_dropout),
-            nn.Linear(d_model, seq_len),
+            nn.Linear(hidden_dim, seq_len),
         )
 
         self.latent_projection = nn.Linear(latent_dim, d_model)
@@ -275,6 +278,7 @@ class DualPathTransformerConditionalVAE(nn.Module):
         gated_film_init: float = 0.1,
         latent_fuse_weight_learnable: bool = True,
         global_path_dropout: float = 0.2,
+        global_path_hidden_dim: int = 256,
         global_path_warmup_hold_epochs: int = 5,
         global_path_warmup_ramp_epochs: int = 10,
         decoder_logit_gain: float = 1.0,
@@ -311,6 +315,7 @@ class DualPathTransformerConditionalVAE(nn.Module):
             film_gate_init=gated_film_init,
             latent_fuse_weight_learnable=latent_fuse_weight_learnable,
             global_path_dropout=global_path_dropout,
+            global_path_hidden_dim=global_path_hidden_dim,
             global_path_warmup_hold_epochs=global_path_warmup_hold_epochs,
             global_path_warmup_ramp_epochs=global_path_warmup_ramp_epochs,
             decoder_logit_gain=decoder_logit_gain,

@@ -6,18 +6,19 @@ model:
     d_model: 256
     n_heads: 8
     encoder_layers: 6
-    decoder_layers: 2
+    decoder_layers: 4
     dropout: 0.0
 
     # Latent fusion params
-    latent_fuse_weight: 0.5
-    latent_fuse_weight_min: 0.3
+    latent_fuse_weight: 0.6
+    latent_fuse_weight_min: 0.4
     latent_fuse_weight_learnable: true
 
     # Global path params
     global_path_dropout: 0.2
-    global_path_warmup_hold_epochs: 10
-    global_path_warmup_ramp_epochs: 20
+    global_path_hidden_dim: 64
+    global_path_warmup_hold_epochs: 5
+    global_path_warmup_ramp_epochs: 15
 
-    gated_film_init: 0.3
-    decoder_logit_gain: 3.0
+    gated_film_init: 0.2
+    decoder_logit_gain: 1.0

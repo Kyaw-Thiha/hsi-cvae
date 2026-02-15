@@ -204,10 +204,6 @@ class RepeatZDecoder(nn.Module):
         n_heads: int,
         n_layers: int,
         dropout: float,
-        use_local_refiner: bool,
-        local_refiner_gate_init: float,
-        local_refiner_gate_learnable: bool,
-        local_refiner_warmup_epochs: int,
         wavelengths_nm: torch.Tensor,
     ) -> None:
         super().__init__()
@@ -215,57 +211,6 @@ class RepeatZDecoder(nn.Module):
         self.latent_to_token = nn.Linear(latent_dim, d_model)
         self.pos_enc = WavelengthAwarePositionalEncoding(d_model=d_model, wavelengths_nm=wavelengths_nm)
         self.layers = nn.ModuleList([RepeatZTransformerBlock(d_model, n_heads, cond_dim, dropout) for _ in range(n_layers)])
-
-        self.use_local_refiner = use_local_refiner
-        self.local_refiner_warmup_epochs = max(int(local_refiner_warmup_epochs), 0)
-        gate_init_tensor = torch.tensor(float(local_refiner_gate_init), dtype=torch.float32)
-        if local_refiner_gate_learnable:
-            self.local_refiner_gate = nn.Parameter(gate_init_tensor.clone())
-        else:
-            self.register_buffer("local_refiner_gate", gate_init_tensor.clone())
-        initial_scale = 0.0 if self.local_refiner_warmup_epochs > 0 else 1.0
-        self.register_buffer("local_refiner_warmup_scale", torch.tensor(initial_scale, dtype=torch.float32), persistent=False)
-
-        self.local_refiner = None
-        if self.use_local_refiner:
-            # Local depthwise-separable convolutions over wavelength axis.
-            self.local_refiner = nn.Sequential(
-                # Stage 1: broad local context per channel (~70nm window).
-                nn.Conv1d(
-                    d_model,
-                    d_model,
-                    kernel_size=7,
-                    padding=3,
-                    padding_mode="reflect",
-                    groups=d_model,
-                    bias=False,
-                ),
-                nn.GELU(),
-                # Pointwise expansion/mixing across channels.
-                nn.Conv1d(d_model, 2 * d_model, kernel_size=1),
-                nn.GELU(),
-                # Project back to model width.
-                nn.Conv1d(2 * d_model, d_model, kernel_size=1),
-                # Stage 2: finer local detail per channel (~30nm window).
-                nn.Conv1d(
-                    d_model,
-                    d_model,
-                    kernel_size=3,
-                    padding=1,
-                    padding_mode="reflect",
-                    groups=d_model,
-                    bias=False,
-                ),
-                nn.GELU(),
-                # Final channel mixing before residual add.
-                nn.Conv1d(d_model, d_model, kernel_size=1),
-            )
-            # Start from identity-like behavior: local branch initially contributes ~0.
-            final_mix = self.local_refiner[-1]
-            if isinstance(final_mix, nn.Conv1d):
-                nn.init.zeros_(final_mix.weight)
-                if final_mix.bias is not None:
-                    nn.init.zeros_(final_mix.bias)
 
         self.out_head = nn.Linear(d_model, 1)
 
@@ -275,25 +220,7 @@ class RepeatZDecoder(nn.Module):
         for layer in self.layers:
             x = layer(x, cond)
 
-        if self.local_refiner is not None:
-            x_t = x.transpose(1, 2)  # (B, L, D) -> (B, D, L)
-            x_local = self.local_refiner(x_t).transpose(1, 2)
-            gate = self.local_refiner_gate.to(device=x.device, dtype=x.dtype)
-            warmup_scale = self.local_refiner_warmup_scale.to(device=x.device, dtype=x.dtype)
-            x = x + (gate * warmup_scale) * x_local
-
         return torch.sigmoid(self.out_head(x)).squeeze(-1)
-
-    def set_local_refiner_warmup_epoch(self, epoch: int) -> None:
-        if self.local_refiner_warmup_epochs <= 0:
-            self.local_refiner_warmup_scale.fill_(1.0)
-            return
-        ratio = min(max(float(epoch + 1) / float(self.local_refiner_warmup_epochs), 0.0), 1.0)
-        self.local_refiner_warmup_scale.fill_(ratio)
-
-    def local_refiner_effective_gate(self) -> torch.Tensor:
-        gate = self.local_refiner_gate
-        return gate * self.local_refiner_warmup_scale.to(device=gate.device, dtype=gate.dtype)
 
 
 class TransformerRepeatZConditionalVAE(nn.Module):
@@ -307,10 +234,6 @@ class TransformerRepeatZConditionalVAE(nn.Module):
         encoder_layers: int = 6,
         decoder_layers: int = 4,
         dropout: float = 0.1,
-        decoder_use_local_refiner: bool = True,
-        decoder_local_refiner_gate_init: float = 0.0,
-        decoder_local_refiner_gate_learnable: bool = True,
-        decoder_local_refiner_warmup_epochs: int = 10,
         wavelength_start_nm: int = 400,
         wavelength_end_nm: int = 2490,
         wavelength_step_nm: int = 10,
@@ -341,10 +264,6 @@ class TransformerRepeatZConditionalVAE(nn.Module):
             n_heads=n_heads,
             n_layers=decoder_layers,
             dropout=dropout,
-            use_local_refiner=decoder_use_local_refiner,
-            local_refiner_gate_init=decoder_local_refiner_gate_init,
-            local_refiner_gate_learnable=decoder_local_refiner_gate_learnable,
-            local_refiner_warmup_epochs=decoder_local_refiner_warmup_epochs,
             wavelengths_nm=wavelengths_nm,
         )
 
@@ -365,9 +284,3 @@ class TransformerRepeatZConditionalVAE(nn.Module):
         z = self.reparameterize(mu, logvar)
         recon = self.decode(z, cond)
         return recon, mu, logvar
-
-    def set_local_refiner_warmup_epoch(self, epoch: int) -> None:
-        self.decoder.set_local_refiner_warmup_epoch(epoch)
-
-    def local_refiner_effective_gate(self) -> torch.Tensor:
-        return self.decoder.local_refiner_effective_gate()
