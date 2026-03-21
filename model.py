@@ -280,6 +280,7 @@ class CVAELightningModule(L.LightningModule):
                 "global_path_warmup_hold_epochs": 5,
                 "global_path_warmup_ramp_epochs": 10,
                 "decoder_logit_gain": 1.0,
+                "decoder_use_film": True,
             }
             dual_path_defaults.update(self.dual_path_transformer_params)
             return DualPathTransformerConditionalVAE(

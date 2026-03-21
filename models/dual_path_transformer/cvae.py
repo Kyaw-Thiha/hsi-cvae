@@ -74,13 +74,23 @@ class EncoderTransformerBlock(nn.Module):
 class DecoderTransformerBlock(nn.Module):
     """Decoder block with self-attn, gated FiLM, and FFN."""
 
-    def __init__(self, d_model: int, n_heads: int, cond_dim: int, dropout: float, film_gate_init: float) -> None:
+    def __init__(
+        self,
+        d_model: int,
+        n_heads: int,
+        cond_dim: int,
+        dropout: float,
+        film_gate_init: float,
+        use_film: bool,
+    ) -> None:
         super().__init__()
         self.norm_attn = RMSNorm(d_model)
         self.self_attn = nn.MultiheadAttention(d_model, n_heads, dropout=0.0, batch_first=True)
         self.drop_attn = nn.Dropout(dropout)
 
-        self.film = GatedFiLM(cond_dim=cond_dim, d_model=d_model, gate_init=film_gate_init)
+        self.film: GatedFiLM | None = None
+        if use_film:
+            self.film = GatedFiLM(cond_dim=cond_dim, d_model=d_model, gate_init=film_gate_init)
 
         self.norm_ffn = RMSNorm(d_model)
         self.ffn = nn.Sequential(
@@ -95,7 +105,8 @@ class DecoderTransformerBlock(nn.Module):
         h, _ = self.self_attn(h, h, h, need_weights=False)
         x = x + self.drop_attn(h)
 
-        x = self.film(x, cond)
+        if self.film is not None:
+            x = self.film(x, cond)
 
         h = self.norm_ffn(x)
         h = self.ffn(h)
@@ -159,6 +170,7 @@ class DualPathDecoder(nn.Module):
         global_path_warmup_hold_epochs: int,
         global_path_warmup_ramp_epochs: int,
         decoder_logit_gain: float,
+        decoder_use_film: bool,
     ) -> None:
         super().__init__()
         self.seq_len = seq_len
@@ -200,6 +212,7 @@ class DualPathDecoder(nn.Module):
                     cond_dim=d_model,
                     dropout=dropout,
                     film_gate_init=film_gate_init,
+                    use_film=decoder_use_film,
                 )
                 for _ in range(n_layers)
             ]
@@ -282,6 +295,7 @@ class DualPathTransformerConditionalVAE(nn.Module):
         global_path_warmup_hold_epochs: int = 5,
         global_path_warmup_ramp_epochs: int = 10,
         decoder_logit_gain: float = 1.0,
+        decoder_use_film: bool = True,
     ) -> None:
         super().__init__()
         self.d_model = d_model
@@ -319,6 +333,7 @@ class DualPathTransformerConditionalVAE(nn.Module):
             global_path_warmup_hold_epochs=global_path_warmup_hold_epochs,
             global_path_warmup_ramp_epochs=global_path_warmup_ramp_epochs,
             decoder_logit_gain=decoder_logit_gain,
+            decoder_use_film=decoder_use_film,
         )
 
     def set_global_path_warmup_epoch(self, epoch: int) -> None:

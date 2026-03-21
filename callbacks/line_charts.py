@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Optional, Sequence
 
 import torch
@@ -14,6 +13,8 @@ except ModuleNotFoundError as exc:  # pragma: no cover - import guard for option
         "Plotly is required for the SampleLineCharts callback. "
         "Install it with `pip install plotly` to enable spectral chart logging."
     ) from exc
+
+from .path_utils import resolve_callback_out_dir
 
 
 class SampleLineCharts(Callback):
@@ -72,7 +73,8 @@ class SampleLineCharts(Callback):
 
         wavelengths = (self.start_nm + self.step_nm * torch.arange(spectra.shape[1])).tolist()
 
-        os.makedirs(self.out_dir, exist_ok=True)
+        out_dir = resolve_callback_out_dir(trainer.default_root_dir, self.out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
         fig = go.Figure()
         label_list = labels.cpu().tolist()
         data = spectra.numpy()
@@ -92,8 +94,8 @@ class SampleLineCharts(Callback):
             template="plotly_dark",
         )
 
-        out_path = os.path.join(self.out_dir, f"epoch_{trainer.current_epoch}.html")
-        fig.write_html(out_path, auto_open=False, include_plotlyjs="cdn")
+        out_path = out_dir / f"epoch_{trainer.current_epoch}.html"
+        fig.write_html(str(out_path), auto_open=False, include_plotlyjs="cdn")
 
     def _resolve_class_name(self, label: int) -> str:
         if self.class_names:

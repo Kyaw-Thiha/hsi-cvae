@@ -1,0 +1,8 @@
+trainer:
+  max_epochs: 80
+
+model:
+  loss_params:
+    beta: 0.02
+    free_bits_total: 2.0
+    grad_weight: 0.5

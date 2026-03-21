@@ -1,0 +1,3 @@
+model:
+  dual_path_transformer_params:
+    gated_film_init: 0.20

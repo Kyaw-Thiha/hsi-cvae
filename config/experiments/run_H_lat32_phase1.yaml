@@ -1,0 +1,26 @@
+trainer:
+  max_epochs: 40
+
+model:
+  latent_dim: 32
+  condition_dropout: 0.35
+  dual_path_transformer_params:
+    d_model: 128
+    n_heads: 8
+    encoder_layers: 6
+    decoder_layers: 2
+    dropout: 0.0
+    latent_fuse_weight: 0.85
+    latent_fuse_weight_min: 0.75
+    latent_fuse_weight_learnable: true
+    global_path_hidden_dim: 32
+    global_path_dropout: 0.50
+    global_path_warmup_hold_epochs: 20
+    global_path_warmup_ramp_epochs: 30
+    gated_film_init: 0.20
+    decoder_logit_gain: 1.0
+    decoder_use_film: true
+  loss_params:
+    beta: 0.02
+    free_bits_total: 2.0
+    grad_weight: 0.0

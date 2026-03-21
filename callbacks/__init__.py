@@ -1,5 +1,7 @@
 """Helper callbacks for Lightning training."""
 
+from .cvae_setup_json import SaveCVAESetupJSON
+from .data_artifacts import SaveDataArtifacts
 from .line_charts import SampleLineCharts
 from .latent_diversity_line_charts import LatentDiversityLineCharts
 from .pure_line_charts import PureLineCharts
@@ -14,4 +16,6 @@ __all__ = [
     "LatentDiversityLineCharts",
     "PureLineCharts",
     "PredictLineCharts",
+    "SaveDataArtifacts",
+    "SaveCVAESetupJSON",
 ]

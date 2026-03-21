@@ -14,14 +14,14 @@ trainer:
   callbacks:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
-        dirpath: outputs/checkpoints/best
+        dirpath: ${trainer.default_root_dir}/checkpoints/best
         filename: e_{epoch}-l_{val_loss:.4f}
         monitor: val_loss
         mode: min
         save_top_k: 1
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
-        dirpath: outputs/checkpoints/interval
+        dirpath: ${trainer.default_root_dir}/checkpoints/interval
         filename: e_{epoch}
         every_n_epochs: 5
         save_top_k: -1
@@ -87,6 +87,14 @@ trainer:
     - class_path: callbacks.train_timing.SaveTrainingTime
       init_args:
         out_dir: outputs/checkpoints
+    - class_path: callbacks.data_artifacts.SaveDataArtifacts
+      init_args:
+        out_dir: outputs/artifacts
+        save_npy: true
+    - class_path: callbacks.cvae_setup_json.SaveCVAESetupJSON
+      init_args:
+        out_dir: outputs/artifacts
+        filename: cvae_setup.json
 
 model:
   architecture: dual_path_transformer

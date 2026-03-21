@@ -1,4 +1,6 @@
 # Scale-VAE in This Project
+NOTE: The final didn't end up using `Scale-VAE`` and instead just used `Beta-VAE`.
+So, the optimal hyperparams for `Scale-VAE` were not found.
 
 ## Background (from the paper)
 

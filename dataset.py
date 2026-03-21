@@ -31,7 +31,14 @@ class HyperspectralDataset(Dataset[Batch]):
         self.spectral_columns = self._infer_spectral_columns(df.columns, spectral_range)
 
         spectra = df[self.spectral_columns].to_numpy(dtype=np.float32)
-        spectra = self.normalize_reflectance(spectra)
+        self.reflectance_min = float(spectra.min())
+        self.reflectance_max = float(spectra.max())
+        self.reflectance_range = max(self.reflectance_max - self.reflectance_min, 1e-6)
+        spectra = self.normalize_reflectance(
+            spectra,
+            min_value=self.reflectance_min,
+            max_value=self.reflectance_max,
+        )
         conditions = df[self.condition_columns].to_numpy(dtype=np.float32)
 
         self.spectra = torch.tensor(spectra, dtype=dtype)
@@ -39,10 +46,16 @@ class HyperspectralDataset(Dataset[Batch]):
         self._df = df if cache_dataframe else None
 
     @staticmethod
-    def normalize_reflectance(values: np.ndarray) -> np.ndarray:
+    def normalize_reflectance(
+        values: np.ndarray,
+        min_value: Optional[float] = None,
+        max_value: Optional[float] = None,
+    ) -> np.ndarray:
         """Min-max normalize using a single dataset-wide range to keep absolute brightness information."""
-        min_value = float(values.min())
-        max_value = float(values.max())
+        if min_value is None:
+            min_value = float(values.min())
+        if max_value is None:
+            max_value = float(values.max())
         value_range = max(max_value - min_value, 1e-6)
         return (values - min_value) / value_range
 

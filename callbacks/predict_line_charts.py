@@ -8,6 +8,8 @@ import numpy as np
 import torch
 from lightning.pytorch import Callback, LightningModule, Trainer
 
+from .path_utils import resolve_callback_out_dir
+
 try:
     import plotly.graph_objects as go
 except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency guard
@@ -52,16 +54,19 @@ class PredictLineCharts(Callback):
         self._set_custom_conditions(custom_conditions)
 
         self._groups: dict[int, list[dict[str, torch.Tensor | Optional[int]]]] = {}
+        self._resolved_out_dir = self.out_dir
 
     def on_predict_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
+        del pl_module
         self._groups.clear()
         if self.custom_conditions is None:
             datamodule = getattr(trainer, "datamodule", None)
             resolved = getattr(datamodule, "resolved_predict_conditions", None)
             if resolved:
                 self._set_custom_conditions(resolved)
+        self._resolved_out_dir = resolve_callback_out_dir(trainer.default_root_dir, self.out_dir)
         if trainer.is_global_zero:
-            self.out_dir.mkdir(parents=True, exist_ok=True)
+            self._resolved_out_dir.mkdir(parents=True, exist_ok=True)
 
     def on_predict_batch_end(
         self,
@@ -116,6 +121,7 @@ class PredictLineCharts(Callback):
             self._groups.setdefault(sample_key, []).append(entry)
 
     def on_predict_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
+        del pl_module
         if not trainer.is_global_zero or not self._groups:
             return
 
@@ -279,7 +285,7 @@ class PredictLineCharts(Callback):
 
         values = (spectra.clamp(-1.0, 1.0) + 1.0) / 2.0
 
-        sample_dir = self.out_dir / f"sample_{sample_id:04d}"
+        sample_dir = self._resolved_out_dir / f"sample_{sample_id:04d}"
         sample_dir.mkdir(parents=True, exist_ok=True)
         chart_path = sample_dir / f"sample_{sample_id:04d}.html"
         self._write_chart(chart_path, wavelengths, values, conditions, entries_sorted)

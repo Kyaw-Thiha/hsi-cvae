@@ -1,0 +1,6 @@
+trainer:
+  max_epochs: 120
+
+model:
+  loss_params:
+    grad_weight: 8.0

@@ -34,6 +34,7 @@ def _configure_tensorcore_precision() -> None:
 
 class CVAELightningCLI(LightningCLI):
     _MODEL_NAME_PLACEHOLDER = "${model.model_name}"
+    _TRAINER_ROOT_PLACEHOLDER = "${trainer.default_root_dir}"
 
     def add_arguments_to_parser(self, parser):
         super().add_arguments_to_parser(parser)
@@ -141,17 +142,22 @@ class CVAELightningCLI(LightningCLI):
     # Setting the correct model name for checkpoints saving
     # ----------------------------------
     def _materialize_model_name_placeholders(self) -> None:
-        """Replace `${model.model_name}` placeholders after CLI instantiation."""
-        placeholder = self._MODEL_NAME_PLACEHOLDER
+        """Replace config placeholders after CLI instantiation."""
+        model_placeholder = self._MODEL_NAME_PLACEHOLDER
+        trainer_root_placeholder = self._TRAINER_ROOT_PLACEHOLDER
         model_name = getattr(self.model, "model_name", None)
-        if not isinstance(model_name, str):
-            return
+        trainer_root = str(getattr(self.trainer, "default_root_dir", "") or "")
 
         for callback in getattr(self.trainer, "callbacks", []):
             if isinstance(callback, ModelCheckpoint):
                 dirpath = getattr(callback, "dirpath", None)
-                if isinstance(dirpath, str) and placeholder in dirpath:
-                    callback.dirpath = dirpath.replace(placeholder, model_name)
+                if isinstance(dirpath, str):
+                    resolved = dirpath
+                    if isinstance(model_name, str) and model_placeholder in resolved:
+                        resolved = resolved.replace(model_placeholder, model_name)
+                    if trainer_root and trainer_root_placeholder in resolved:
+                        resolved = resolved.replace(trainer_root_placeholder, trainer_root)
+                    callback.dirpath = resolved
 
         loggers = getattr(self.trainer, "loggers", None) or []
         if not loggers:
@@ -160,8 +166,8 @@ class CVAELightningCLI(LightningCLI):
 
         for logger in loggers:
             name = getattr(logger, "name", None)
-            if isinstance(name, str) and placeholder in name:
-                resolved = name.replace(placeholder, model_name)
+            if isinstance(name, str) and isinstance(model_name, str) and model_placeholder in name:
+                resolved = name.replace(model_placeholder, model_name)
                 try:
                     setattr(logger, "name", resolved)
                 except (AttributeError, TypeError):

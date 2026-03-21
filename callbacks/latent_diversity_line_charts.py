@@ -8,6 +8,8 @@ import pandas as pd
 import torch
 from lightning.pytorch import Callback, LightningModule, Trainer
 
+from .path_utils import resolve_callback_out_dir
+
 try:
     import plotly.graph_objects as go
 except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency guard
@@ -72,7 +74,8 @@ class LatentDiversityLineCharts(Callback):
         if not self._wavelengths or not self._pure_values_by_material:
             self._prepare_original_data()
 
-        self.out_dir.mkdir(parents=True, exist_ok=True)
+        out_dir = resolve_callback_out_dir(trainer.default_root_dir, self.out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
         device = pl_module.device
 
         for material in ("gv", "npv", "soil"):
@@ -97,6 +100,7 @@ class LatentDiversityLineCharts(Callback):
                 pred_lines=pred_lines,
                 orig_values=orig_values,
                 orig_names=orig_names,
+                out_dir=out_dir,
             )
 
     def _prepare_original_data(self) -> None:
@@ -146,6 +150,7 @@ class LatentDiversityLineCharts(Callback):
         pred_lines: np.ndarray,
         orig_values: np.ndarray,
         orig_names: Sequence[str],
+        out_dir: Path,
     ) -> None:
         fig = go.Figure()
 
@@ -218,7 +223,7 @@ class LatentDiversityLineCharts(Callback):
             hovermode="x unified",
             template="plotly_dark",
         )
-        out_path = self.out_dir / f"epoch_{epoch}_{material}.html"
+        out_path = out_dir / f"epoch_{epoch}_{material}.html"
         fig.write_html(str(out_path), auto_open=False, include_plotlyjs="cdn")
 
     def _pure_condition(self, material: str, condition_dim: int, device: torch.device) -> Optional[torch.Tensor]:
