@@ -1,0 +1,5 @@
+model:
+  loss_params:
+    masked_wavelength_ranges_nm:
+      - [1700, 1900]
+    masked_wavelength_weight: 0.0

@@ -2,6 +2,22 @@
 This is a Conditional Variational AutoEncoder for generating synthetic hyperspectral data, developed for usage
 by FINCH satellite of University of Toronto Aerospace Team.
 
+## Installing packages
+Create the virtual env.
+```bash
+conda create -n hsi-cvae python=3.13 -y
+```
+
+Activate the virtual env.
+```bash
+conda activate hsi-cvae
+```
+
+Install the packages.
+```bash
+pip install -r requirements.txt
+```
+
 ## Training the Model
 ### 🔧 Training
 ```bash

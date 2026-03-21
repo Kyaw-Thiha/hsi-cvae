@@ -29,18 +29,29 @@ class HyperspectralDataset(Dataset[Batch]):
         df = pd.read_csv(self.csv_path)
         self.condition_columns = list(condition_columns)
         self.spectral_columns = self._infer_spectral_columns(df.columns, spectral_range)
+        self.row_indices = np.arange(len(df), dtype=np.int64)
+        self.spectrum_id_column = "Spectra"
+        if self.spectrum_id_column in df.columns:
+            self.spectrum_ids = df[self.spectrum_id_column].astype(str).tolist()
+            self.has_source_spectrum_ids = True
+        else:
+            self.spectrum_ids = [f"row_{idx}" for idx in self.row_indices]
+            self.has_source_spectrum_ids = False
 
-        spectra = df[self.spectral_columns].to_numpy(dtype=np.float32)
-        self.reflectance_min = float(spectra.min())
-        self.reflectance_max = float(spectra.max())
+        raw_spectra = df[self.spectral_columns].to_numpy(dtype=np.float32)
+        self.reflectance_min = float(raw_spectra.min())
+        self.reflectance_max = float(raw_spectra.max())
         self.reflectance_range = max(self.reflectance_max - self.reflectance_min, 1e-6)
         spectra = self.normalize_reflectance(
-            spectra,
+            raw_spectra,
             min_value=self.reflectance_min,
             max_value=self.reflectance_max,
         )
         conditions = df[self.condition_columns].to_numpy(dtype=np.float32)
 
+        self.raw_spectra = torch.tensor(raw_spectra, dtype=dtype)
+        self.reflectance_mean = float(self.raw_spectra.mean().item())
+        self.reflectance_std = float(self.raw_spectra.std(unbiased=True).item())
         self.spectra = torch.tensor(spectra, dtype=dtype)
         self.conditions = torch.tensor(conditions, dtype=dtype)
         self._df = df if cache_dataframe else None

@@ -16,7 +16,7 @@ class SaveCVAESetupJSON(Callback):
     def __init__(
         self,
         out_dir: str = "outputs/artifacts",
-        filename: str = "cvae_setup.json",
+        filename: str = "cfg_tcvae_setup.json",
     ) -> None:
         super().__init__()
         self.out_dir = out_dir
@@ -87,58 +87,60 @@ class SaveCVAESetupJSON(Callback):
         best_ckpt_path, interval_latest_ckpt_path, checkpoint_dirs = self._checkpoint_paths_from_trainer(trainer)
         artifact_paths = self._artifact_paths(out_dir)
         model_block = self._model_block(model_cfg)
+        tcvae_block = {
+            "model": model_block,
+            "loss": {
+                "loss_name": model_cfg.get("loss_name"),
+                "loss_params": model_cfg.get("loss_params"),
+            },
+            "optimizer": {
+                "lr": model_cfg.get("lr"),
+                "weight_decay": model_cfg.get("weight_decay"),
+            },
+            "scheduler": model_cfg.get("scheduler_cfg"),
+            "data": {
+                "csv_path": data_cfg.get("csv_path"),
+                "condition_columns": data_cfg.get("condition_columns"),
+                "spectral_range": data_cfg.get("spectral_range"),
+                "splits": data_cfg.get("splits"),
+                "seed": data_cfg.get("seed"),
+                "batch_size": data_cfg.get("batch_size"),
+                "num_workers": data_cfg.get("num_workers"),
+                "pin_memory": data_cfg.get("pin_memory"),
+            },
+            "sampling": {
+                "temperature": model_cfg.get("temperature"),
+                "guidance_scale": model_cfg.get("guidance_scale"),
+                "condition_scale": model_cfg.get("condition_scale"),
+                "condition_dropout": model_cfg.get("condition_dropout"),
+            },
+            "artifacts": {
+                "run_dir": str(run_dir),
+                "config_yaml": str(version_dir / "config.yaml"),
+                "hparams_yaml": str(version_dir / "hparams.yaml"),
+                "resume_from_ckpt_path": cfg.get("ckpt_path"),
+                "checkpoint_dirs": checkpoint_dirs,
+                "best_ckpt_path": best_ckpt_path,
+                "interval_latest_ckpt_path": interval_latest_ckpt_path,
+                **artifact_paths,
+            },
+            "provenance": {
+                "subcommand": cfg.get("subcommand"),
+                "seed_everything": cfg.get("seed_everything"),
+                "trainer": {
+                    "max_epochs": trainer_cfg.get("max_epochs"),
+                    "precision": trainer_cfg.get("precision"),
+                    "default_root_dir": trainer_cfg.get("default_root_dir"),
+                },
+                "exported_at_utc": datetime.now(timezone.utc).isoformat(),
+                "git_commit": self._git_commit(),
+            },
+        }
 
         return {
             "cvae_type": model_block.get("model_type", "ConditionalVAE"),
-            "cfg_cvae": {
-                "model": model_block,
-                "loss": {
-                    "loss_name": model_cfg.get("loss_name"),
-                    "loss_params": model_cfg.get("loss_params"),
-                },
-                "optimizer": {
-                    "lr": model_cfg.get("lr"),
-                    "weight_decay": model_cfg.get("weight_decay"),
-                },
-                "scheduler": model_cfg.get("scheduler_cfg"),
-                "data": {
-                    "csv_path": data_cfg.get("csv_path"),
-                    "condition_columns": data_cfg.get("condition_columns"),
-                    "spectral_range": data_cfg.get("spectral_range"),
-                    "splits": data_cfg.get("splits"),
-                    "seed": data_cfg.get("seed"),
-                    "batch_size": data_cfg.get("batch_size"),
-                    "num_workers": data_cfg.get("num_workers"),
-                    "pin_memory": data_cfg.get("pin_memory"),
-                },
-                "sampling": {
-                    "temperature": model_cfg.get("temperature"),
-                    "guidance_scale": model_cfg.get("guidance_scale"),
-                    "condition_scale": model_cfg.get("condition_scale"),
-                    "condition_dropout": model_cfg.get("condition_dropout"),
-                },
-                "artifacts": {
-                    "run_dir": str(run_dir),
-                    "config_yaml": str(version_dir / "config.yaml"),
-                    "hparams_yaml": str(version_dir / "hparams.yaml"),
-                    "resume_from_ckpt_path": cfg.get("ckpt_path"),
-                    "checkpoint_dirs": checkpoint_dirs,
-                    "best_ckpt_path": best_ckpt_path,
-                    "interval_latest_ckpt_path": interval_latest_ckpt_path,
-                    **artifact_paths,
-                },
-                "provenance": {
-                    "subcommand": cfg.get("subcommand"),
-                    "seed_everything": cfg.get("seed_everything"),
-                    "trainer": {
-                        "max_epochs": trainer_cfg.get("max_epochs"),
-                        "precision": trainer_cfg.get("precision"),
-                        "default_root_dir": trainer_cfg.get("default_root_dir"),
-                    },
-                    "exported_at_utc": datetime.now(timezone.utc).isoformat(),
-                    "git_commit": self._git_commit(),
-                },
-            },
+            "cfg_tcvae": tcvae_block,
+            "cfg_cvae": tcvae_block,
         }
 
     @staticmethod
@@ -168,9 +170,12 @@ class SaveCVAESetupJSON(Callback):
     @staticmethod
     def _artifact_paths(artifact_dir: Path) -> dict[str, Optional[str]]:
         file_keys = {
+            "norm_dict_path": "norm_dict.json",
             "minmax_stats_path": "minmax_stats.json",
-            "psi1_path": "psi1_train_normalized.csv",
-            "psi2_path": "psi2_test_val_normalized.csv",
+            "psi1_path": "psi1_gdstreamline.csv",
+            "psi2_path": "psi2_gdstreamline.csv",
+            "psi1_normalized_path": "psi1_train_normalized.csv",
+            "psi2_normalized_path": "psi2_test_val_normalized.csv",
             "psi1_conditions_path": "psi1_train_conditions_normalized.csv",
             "psi2_conditions_path": "psi2_test_val_conditions_normalized.csv",
             "psi1_spectra_path": "psi1_train_spectra_normalized.csv",

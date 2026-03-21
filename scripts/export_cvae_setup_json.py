@@ -15,7 +15,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--runs-root", type=str, default="outputs/ablations")
     parser.add_argument("--run-glob", type=str, default="run_*")
     parser.add_argument("--artifacts-subdir", type=str, default="artifacts")
-    parser.add_argument("--filename", type=str, default="cvae_setup.json")
+    parser.add_argument("--filename", type=str, default="cfg_tcvae_setup.json")
     return parser.parse_args()
 
 
@@ -121,9 +121,12 @@ def model_block(model_cfg: dict[str, Any]) -> dict[str, Any]:
 
 def artifact_paths(artifact_dir: Path) -> dict[str, Optional[str]]:
     file_keys = {
+        "norm_dict_path": "norm_dict.json",
         "minmax_stats_path": "minmax_stats.json",
-        "psi1_path": "psi1_train_normalized.csv",
-        "psi2_path": "psi2_test_val_normalized.csv",
+        "psi1_path": "psi1_gdstreamline.csv",
+        "psi2_path": "psi2_gdstreamline.csv",
+        "psi1_normalized_path": "psi1_train_normalized.csv",
+        "psi2_normalized_path": "psi2_test_val_normalized.csv",
         "psi1_conditions_path": "psi1_train_conditions_normalized.csv",
         "psi2_conditions_path": "psi2_test_val_conditions_normalized.csv",
         "psi1_spectra_path": "psi1_train_spectra_normalized.csv",
@@ -164,60 +167,62 @@ def build_payload(cfg: dict[str, Any], run_dir: Path, version_dir: Path, artifac
         interval_ckpt_path = latest_checkpoint_in_dir(interval_dir)
 
     block = model_block(model_cfg)
+    tcvae_block = {
+        "model": block,
+        "loss": {
+            "loss_name": model_cfg.get("loss_name"),
+            "loss_params": model_cfg.get("loss_params"),
+        },
+        "optimizer": {
+            "lr": model_cfg.get("lr"),
+            "weight_decay": model_cfg.get("weight_decay"),
+        },
+        "scheduler": model_cfg.get("scheduler_cfg"),
+        "data": {
+            "csv_path": data_cfg.get("csv_path"),
+            "condition_columns": data_cfg.get("condition_columns"),
+            "spectral_range": data_cfg.get("spectral_range"),
+            "splits": data_cfg.get("splits"),
+            "seed": data_cfg.get("seed"),
+            "batch_size": data_cfg.get("batch_size"),
+            "num_workers": data_cfg.get("num_workers"),
+            "pin_memory": data_cfg.get("pin_memory"),
+        },
+        "sampling": {
+            "temperature": model_cfg.get("temperature"),
+            "guidance_scale": model_cfg.get("guidance_scale"),
+            "condition_scale": model_cfg.get("condition_scale"),
+            "condition_dropout": model_cfg.get("condition_dropout"),
+        },
+        "artifacts": {
+            "run_dir": str(run_dir),
+            "config_yaml": str(version_dir / "config.yaml"),
+            "hparams_yaml": str(version_dir / "hparams.yaml"),
+            "resume_from_ckpt_path": cfg.get("ckpt_path"),
+            "checkpoint_dirs": {
+                "best": best_dir,
+                "interval": interval_dir,
+            },
+            "best_ckpt_path": best_ckpt_path,
+            "interval_latest_ckpt_path": interval_ckpt_path,
+            **artifact_paths(artifact_dir),
+        },
+        "provenance": {
+            "subcommand": cfg.get("subcommand"),
+            "seed_everything": cfg.get("seed_everything"),
+            "trainer": {
+                "max_epochs": trainer_cfg.get("max_epochs"),
+                "precision": trainer_cfg.get("precision"),
+                "default_root_dir": trainer_cfg.get("default_root_dir"),
+            },
+            "exported_at_utc": datetime.now(timezone.utc).isoformat(),
+            "git_commit": git_commit(),
+        },
+    }
     return {
         "cvae_type": block.get("model_type", "ConditionalVAE"),
-        "cfg_cvae": {
-            "model": block,
-            "loss": {
-                "loss_name": model_cfg.get("loss_name"),
-                "loss_params": model_cfg.get("loss_params"),
-            },
-            "optimizer": {
-                "lr": model_cfg.get("lr"),
-                "weight_decay": model_cfg.get("weight_decay"),
-            },
-            "scheduler": model_cfg.get("scheduler_cfg"),
-            "data": {
-                "csv_path": data_cfg.get("csv_path"),
-                "condition_columns": data_cfg.get("condition_columns"),
-                "spectral_range": data_cfg.get("spectral_range"),
-                "splits": data_cfg.get("splits"),
-                "seed": data_cfg.get("seed"),
-                "batch_size": data_cfg.get("batch_size"),
-                "num_workers": data_cfg.get("num_workers"),
-                "pin_memory": data_cfg.get("pin_memory"),
-            },
-            "sampling": {
-                "temperature": model_cfg.get("temperature"),
-                "guidance_scale": model_cfg.get("guidance_scale"),
-                "condition_scale": model_cfg.get("condition_scale"),
-                "condition_dropout": model_cfg.get("condition_dropout"),
-            },
-            "artifacts": {
-                "run_dir": str(run_dir),
-                "config_yaml": str(version_dir / "config.yaml"),
-                "hparams_yaml": str(version_dir / "hparams.yaml"),
-                "resume_from_ckpt_path": cfg.get("ckpt_path"),
-                "checkpoint_dirs": {
-                    "best": best_dir,
-                    "interval": interval_dir,
-                },
-                "best_ckpt_path": best_ckpt_path,
-                "interval_latest_ckpt_path": interval_ckpt_path,
-                **artifact_paths(artifact_dir),
-            },
-            "provenance": {
-                "subcommand": cfg.get("subcommand"),
-                "seed_everything": cfg.get("seed_everything"),
-                "trainer": {
-                    "max_epochs": trainer_cfg.get("max_epochs"),
-                    "precision": trainer_cfg.get("precision"),
-                    "default_root_dir": trainer_cfg.get("default_root_dir"),
-                },
-                "exported_at_utc": datetime.now(timezone.utc).isoformat(),
-                "git_commit": git_commit(),
-            },
-        },
+        "cfg_tcvae": tcvae_block,
+        "cfg_cvae": tcvae_block,
     }
 
 

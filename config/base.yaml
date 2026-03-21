@@ -91,10 +91,12 @@ trainer:
       init_args:
         out_dir: outputs/artifacts
         save_npy: true
+        emit_diffusion_compatible_names: true
+        label_auxiliary_files: true
     - class_path: callbacks.cvae_setup_json.SaveCVAESetupJSON
       init_args:
         out_dir: outputs/artifacts
-        filename: cvae_setup.json
+        filename: cfg_tcvae_setup.json
 
 model:
   architecture: dual_path_transformer
